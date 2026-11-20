@@ -12,10 +12,12 @@
     "dev": "ASTRO_TELEMETRY_DISABLED=1 astro dev",
     "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
     "preview": "ASTRO_TELEMETRY_DISABLED=1 astro preview",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm build && pnpm test",
     "typecheck": "ASTRO_TELEMETRY_DISABLED=1 astro check",
     "lint": "eslint .",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
+    "test": "node --test tests/*.test.ts",
     "hooks": "script/install-hooks"
   },
   "dependencies": {
