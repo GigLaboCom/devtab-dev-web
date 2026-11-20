@@ -12,7 +12,9 @@ const t = messages(locale);
 
 <header class="border-b border-border">
   <div class="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-6 py-4">
-    <a href={getRelativeLocaleUrl(locale, '')} class="font-semibold tracking-tight">{t.site.name}</a>
+    <a href={getRelativeLocaleUrl(locale, '')} class="font-semibold tracking-tight">
+      {t.site.name}
+    </a>
     <slot />
   </div>
 </header>

@@ -28,31 +28,33 @@ const fullTitle = title === t.site.name ? title : `${title} · ${t.site.name}`;
     <meta name="description" content={description} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     {path === undefined && <meta name="robots" content="noindex" />}
-    {
-      path !== undefined && (
-        <>
-          <link rel="canonical" href={getAbsoluteLocaleUrl(locale, path)} />
-          {locales.map(other => (
-            <link rel="alternate" hreflang={other} href={getAbsoluteLocaleUrl(other, path)} />
-          ))}
-          <link rel="alternate" hreflang="x-default" href={getAbsoluteLocaleUrl(defaultLocale, path)} />
-          <meta property="og:url" content={getAbsoluteLocaleUrl(locale, path)} />
-        </>
-      )
-    }
+    {path !== undefined && (
+      <>
+        <link rel="canonical" href={getAbsoluteLocaleUrl(locale, path)} />
+        {locales.map(other => (
+          <link rel="alternate" hreflang={other} href={getAbsoluteLocaleUrl(other, path)} />
+        ))}
+        <link rel="alternate" hreflang="x-default" href={getAbsoluteLocaleUrl(defaultLocale, path)} />
+        <meta property="og:url" content={getAbsoluteLocaleUrl(locale, path)} />
+      </>
+    )}
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={t.site.name} />
     <meta property="og:title" content={fullTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:locale" content={locale} />
-    {locales.filter(other => other !== locale).map(other => <meta property="og:locale:alternate" content={other} />)}
+    {locales
+      .filter(other => other !== locale)
+      .map(other => (
+        <meta property="og:locale:alternate" content={other} />
+      ))}
   </head>
   <body class="flex min-h-dvh flex-col bg-background font-sans text-foreground antialiased">
     <a
       href="#main"
-      class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
-      >{t.site.skipToContent}</a
-    >
+      class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground">
+      {t.site.skipToContent}
+    </a>
     <SiteHeader locale={locale}>
       <LanguageSwitch locale={locale} path={path} />
     </SiteHeader>

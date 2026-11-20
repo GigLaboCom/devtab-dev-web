@@ -47,7 +47,9 @@ export function catalogueProblems(
       if (translated === undefined) problems.push(`${locale}: missing ${key}`);
       else if (!translated.trim()) problems.push(`${locale}: empty ${key}`);
       else if (placeholders(translated).join() !== placeholders(text).join()) {
-        problems.push(`${locale}: ${key} has placeholders {${placeholders(translated)}}, ${source} has {${placeholders(text)}}`);
+        problems.push(
+          `${locale}: ${key} has placeholders {${placeholders(translated)}}, ${source} has {${placeholders(text)}}`,
+        );
       }
     }
     for (const key of leaves.keys()) {

@@ -12,6 +12,8 @@ const t = messages(defaultLocale).notFound;
   <h1 class="text-4xl font-semibold tracking-tight">{t.heading}</h1>
   <p class="mt-4 text-lg">{t.message}</p>
   <p class="mt-6">
-    <a href={getRelativeLocaleUrl(defaultLocale, '')} class="underline underline-offset-4">{t.home}</a>
+    <a href={getRelativeLocaleUrl(defaultLocale, '')} class="underline underline-offset-4">
+      {t.home}
+    </a>
   </p>
 </BaseLayout>
