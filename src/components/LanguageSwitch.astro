@@ -1,0 +1,31 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import { locales, messages, type Locale } from '../i18n';
+
+interface Props {
+  locale: Locale;
+  /** The current page's locale-neutral path; none (the 404) links each locale's home page. */
+  path?: string;
+}
+
+const { locale, path = '' } = Astro.props;
+---
+
+<nav aria-label={messages(locale).site.languageSwitch}>
+  <ul class="flex gap-1 text-sm">
+    {
+      locales.map(other => (
+        <li>
+          <a
+            href={getRelativeLocaleUrl(other, path)}
+            hreflang={other}
+            lang={other}
+            aria-current={other === locale ? 'page' : undefined}
+            class="block rounded-md px-2 py-1 text-muted-foreground hover:text-foreground aria-[current=page]:bg-muted aria-[current=page]:text-foreground">
+            {messages(other).language.name}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</nav>

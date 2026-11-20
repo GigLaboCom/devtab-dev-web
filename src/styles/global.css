@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/* Tailwind utilities read the tokens at run time (`bg-background` → var(--background)). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-ring: var(--ring);
+  --radius-md: var(--radius);
+}
+/* `font-sans` and `font-mono` read --font-sans and --font-mono, which tokens.css sets. */
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}

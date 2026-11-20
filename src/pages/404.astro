@@ -1,0 +1,17 @@
+---
+import { getRelativeLocaleUrl } from 'astro:i18n';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { defaultLocale, messages } from '../i18n';
+
+// A static 404 cannot know the locale of the address that missed: it answers
+// in the default locale, and its language switch offers every home page.
+const t = messages(defaultLocale).notFound;
+---
+
+<BaseLayout locale={defaultLocale}>
+  <h1 class="text-4xl font-semibold tracking-tight">{t.heading}</h1>
+  <p class="mt-4 text-lg">{t.message}</p>
+  <p class="mt-6">
+    <a href={getRelativeLocaleUrl(defaultLocale, '')} class="underline underline-offset-4">{t.home}</a>
+  </p>
+</BaseLayout>
