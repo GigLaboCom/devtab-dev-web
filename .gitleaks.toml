@@ -1,0 +1,18 @@
+# gitleaks configuration for the hooks (.githooks/pre-commit, pre-push).
+# https://github.com/gitleaks/gitleaks
+
+title = "site gitleaks config"
+
+[extend]
+# The default rules.
+useDefault = true
+
+[allowlist]
+description = "Dependencies, build output, the lockfile and binary assets"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)\.astro/''',
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''\.(png|jpe?g|webp|avif|ico|woff2?)$''',
+]

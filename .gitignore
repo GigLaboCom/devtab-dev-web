@@ -1,0 +1,19 @@
+# Dependencies, build output and Astro's generated types
+node_modules/
+dist/
+.astro/
+# Local environment
+.env
+.env.*
+.DS_Store
+*.log
+# Throwaway files: screenshots, notes, reports
+/.scratch/
+# Claude Code: personal settings and bookkeeping
+.claude/settings.json
+.claude/settings.local.json
+.claude/.cc-writes/
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+# Personal instructions for Claude Code (identity, local paths), never committed
+/CLAUDE.local.md

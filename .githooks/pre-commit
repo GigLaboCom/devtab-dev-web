@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# Pre-commit: no secrets and no private data in what is about to be
+# committed.
+#
+#   1. Files that stay local never get staged: personal Claude Code files,
+#      .env files, dependencies, build output and scratch folders.
+#   2. Added lines carry no absolute home paths (/Users/Shared/ names no one
+#      and is allowed), no address of the global git identity, and nothing
+#      that matches the maintainer's own list in
+#      <git common dir>/info/privacy-patterns (one extended regex per line;
+#      never tracked, so the patterns themselves stay private).
+#   3. The author is not the global git address (a clone without the
+#      repository's own identity would otherwise commit under it).
+#   4. gitleaks scans the staged changes for secrets (.gitleaks.toml). It is
+#      required: without it the commit is refused.
+#
+# Install once: script/install-hooks. To skip it deliberately:
+# git commit --no-verify.
+
+set -euo pipefail
+
+# shellcheck source=lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+failed=0
+say() { echo "pre-commit: $*" >&2; }
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# 1. Local-only files.
+blocked='^(CLAUDE\.local\.md$|\.claude/settings(\.local)?\.json$|(.*/)?\.env(\..*)?$|node_modules/|dist/|\.astro/|\.scratch/)'
+if blocked_files="$(printf '%s\n' "$staged" | grep -E "$blocked")"; then
+  say "files that stay local are staged:"
+  printf '  %s\n' $blocked_files >&2
+  failed=1
+fi
+
+# 2. Private data in added lines.
+load_patterns
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  added="$({ printf '+%s\n' "$file"; git diff --cached -U0 --no-color -- "$file" | grep -E '^\+' | grep -vE '^\+\+\+ '; } |
+    sed 's#/Us''ers/Shared/##g' || true)"
+  for i in "${!patterns[@]}"; do
+    if printf '%s\n' "$added" | grep -qiE -- "${patterns[$i]}"; then
+      say "$file adds ${labels[$i]}"
+      failed=1
+    fi
+  done
+done <<<"$staged"
+
+# 3. The author's identity.
+author_email="$(git var GIT_AUTHOR_IDENT | sed -E 's/^.* <([^>]*)>.*$/\1/')"
+if [[ -n "$global_email" && "$author_email" == "$global_email" ]]; then
+  say "the author is the global git address: set the repository's own identity"
+  say "(git config --local user.name … / user.email …) and commit again"
+  failed=1
+fi
+
+# 4. Secrets.
+if gitleaks="$(find_gitleaks)"; then
+  if ! "$gitleaks" git --staged --no-banner --redact --log-level warn --config "$root/.gitleaks.toml" "$root" >&2; then
+    say "gitleaks found a possible secret"
+    failed=1
+  fi
+else
+  gitleaks_missing | sed 's/^/pre-commit: /' >&2
+  failed=1
+fi
+
+if [[ $failed -ne 0 ]]; then
+  say "commit refused"
+  exit 1
+fi

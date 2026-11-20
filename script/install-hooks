@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# Points git at the repository's hooks in .githooks/ (pre-commit: secrets,
+# local-only files and private data; commit-msg: no agent attribution and no
+# private data; pre-push: all of it again for what leaves the machine), and
+# creates the private pattern list they read, if it is missing. Run once
+# after cloning; worktrees share both.
+#
+#   script/install-hooks      (or: pnpm hooks)
+
+set -euo pipefail
+
+root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)"
+
+git -C "$root" config core.hooksPath .githooks
+echo "Git hooks: .githooks/ (pre-commit, commit-msg, pre-push)"
+
+list="$common/info/privacy-patterns"
+if [[ ! -f "$list" ]]; then
+  mkdir -p "$common/info"
+  printf '%s\n' \
+    '# Private patterns the hooks refuse in added lines, commit messages and' \
+    '# pushed identities: one extended regular expression per line, matched' \
+    '# without case. This file lives inside .git and is never committed. Add' \
+    '# your names, addresses, employer and names that must not be published.' \
+    >"$list"
+  echo "Created $list: add your own patterns to it."
+fi
+
+if [[ -z "$(git -C "$root" config --local user.email || true)" ]]; then
+  echo "This clone has no identity of its own: set git config --local user.name"
+  echo "and user.email before the first commit (the hooks refuse the global one)."
+fi
+
+found=""
+for bin in "$(command -v gitleaks 2>/dev/null || true)" /opt/homebrew/bin/gitleaks /usr/local/bin/gitleaks; do
+  if [[ -n "$bin" && -x "$bin" ]]; then found="$bin"; break; fi
+done
+if [[ -n "$found" ]]; then
+  echo "gitleaks: $found"
+else
+  echo "gitleaks is not installed, and the hooks refuse commits and pushes until it is:"
+  echo "  brew install gitleaks"
+  echo "  or a release from https://github.com/gitleaks/gitleaks/releases (check its checksums)"
+fi
