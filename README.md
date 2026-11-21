@@ -1,8 +1,8 @@
 # devtab-dev-site
 
-The product site of **devtab.dev**, a Chrome extension for comparing and
-reviewing code. `devtab-dev` is the project's code name; the product has no
-display name yet, so the site shows the domain as its wordmark.
+The product site of **DevTab.Dev**, a Chrome extension for comparing and
+reviewing code. `devtab-dev` is the project's code name; the site shows the
+product's name as its wordmark.
 
 The site is empty on purpose: a home page, a 404, `robots.txt`, a sitemap and
 a language switch, in English and Russian. It is a static Astro site with no

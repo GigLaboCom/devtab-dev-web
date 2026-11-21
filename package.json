@@ -1,7 +1,7 @@
 {
   "name": "devtab-dev-site",
   "version": "0.0.0",
-  "description": "The product site of devtab.dev, a Chrome extension for comparing and reviewing code.",
+  "description": "The product site of DevTab.Dev, a Chrome extension for comparing and reviewing code.",
   "type": "module",
   "private": true,
   "packageManager": "pnpm@12.16.1",
