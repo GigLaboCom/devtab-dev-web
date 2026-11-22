@@ -1,4 +1,4 @@
-# devtab-dev-site
+# devtab-dev-web
 
 The product site of **DevTab.Dev**, a Chrome extension for comparing and
 reviewing code. `devtab-dev` is the project's code name; the site shows the
@@ -9,9 +9,11 @@ a language switch, in English and Russian. It is a static Astro site with no
 client-side JavaScript, no analytics, no third-party scripts and nothing
 loaded from another host.
 
-The project has two sibling repositories: `devtab-dev-extension` (the
-extension) and `devtab-dev-docs` (developer documents, private). This
-repository imports nothing from either and does not need them checked out.
+The project has three sibling repositories: `devtab-dev-extension` (the
+extension), `devtab-dev-docs` (developer documents, private) and
+`devtab-dev-server` (the companion for live review of local changes, not
+started). This repository imports nothing from any of them and does not
+need them checked out.
 
 ## Requirements
 

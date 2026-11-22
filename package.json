@@ -1,5 +1,5 @@
 {
-  "name": "devtab-dev-site",
+  "name": "devtab-dev-web",
   "version": "0.0.0",
   "description": "The product site of DevTab.Dev, a Chrome extension for comparing and reviewing code.",
   "type": "module",
