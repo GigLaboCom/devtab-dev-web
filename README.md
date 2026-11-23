@@ -15,6 +15,8 @@ extension), `devtab-dev-docs` (developer documents, private) and
 started). This repository imports nothing from any of them and does not
 need them checked out.
 
+The site's backend lives here too, in `api/` (see [Backend](#backend-api)).
+
 ## Requirements
 
 - Node 22.23.4 or newer, Astro's minimum (`.nvmrc`, which nvm and fnm read).
@@ -138,6 +140,92 @@ value. Type is the platform's own: no web fonts.
 `https://devtab.dev`, in `src/lib/site.ts`: canonical URLs, alternates,
 `robots.txt` and the sitemap use it. `SITE_URL=https://… pnpm build` builds
 for another address; run the tests with the same `SITE_URL`.
+
+## Backend (`api/`)
+
+`devtab-api` is the site's backend: one Rust binary (axum, tokio, sqlx) with
+two listeners. The public one (`:8080`) answers `/api/healthz` and
+`/api/readyz`; the internal one (`127.0.0.1:8081` in development) answers
+`/internal/healthz` and is meant only for the site's own pages, never
+published. It reads its configuration from `DEVTAB_*` variables and keeps its
+data in Postgres 17, schema `app`, as the role `devtab_api`. So far it is a
+scaffold: health checks, the error shape, the middleware and the first
+migration. The site does not call it yet, and the site's build does not
+change because of it.
+
+Every error answers
+`{"error":"<kebab-case code>","message":"<English text>"}`.
+
+### Requirements
+
+- [rustup](https://rustup.rs); `rust-toolchain.toml` pins Rust 1.94.1 with
+  rustfmt and clippy, and rustup installs it on first use.
+- Docker with Compose v2.20 or newer, for the local database.
+- sqlx-cli 0.9 (the same branch as the `sqlx` crate), installed into the
+  repository's ignored `.state/tools/`, which the `script/db-*` scripts use
+  first; a sqlx-cli 0.9 on `PATH` works too:
+  `cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres --root .state/tools`
+- cargo-deny: `cargo install cargo-deny --locked`.
+
+### Commands
+
+| Command             | What it does                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| `script/db-up`      | Starts Postgres 17 on `127.0.0.1:54330` (database `devtab`, no passwords) and prints the URLs      |
+| `script/db-migrate` | Applies the migrations in `db/migrations/` as the owner                                            |
+| `script/db-reset`   | Drops the database and applies every migration from zero                                           |
+| `script/api-dev`    | Runs the API against the local database as `devtab_api`                                            |
+| `script/api-check`  | `cargo fmt --check`, clippy with `-D warnings`, the tests (with the database), `cargo deny`        |
+| `script/check-all`  | `pnpm check`, then `script/api-check`: what CI checks, before a commit to `api/`, `db/`, `deploy/` |
+
+```bash
+script/db-up && script/db-migrate
+script/api-dev                       # in another terminal:
+curl -fsS localhost:8080/api/readyz  # {"status":"ok"}
+```
+
+`DEVTAB_PUBLIC_ADDR`, `DEVTAB_INTERNAL_ADDR` move the listeners (for example
+when 8080 or 8081 is taken); `devtab-api healthcheck` reads the same
+`DEVTAB_PUBLIC_ADDR`. The database tests (`api/tests/db.rs`) run when
+`DEVTAB_TEST_DATABASE_URL` names a database with the migrations applied;
+`script/api-check` points it at the local one, plain `cargo test` skips them.
+Stop the database with `docker compose -f deploy/local/compose.yaml stop db`;
+its data stays in the Docker volume `devtab-local_devtab_db`.
+
+Dependencies come from crates.io only (`deny.toml`), at versions published at
+least two weeks before they are locked, transitive ones included: after
+`cargo update`, check the new versions' dates and step back a patch where
+needed (`cargo update -p <crate> --precise <version>`).
+
+### Configuration
+
+| Variable                    | Default                                              | Note                             |
+| --------------------------- | ---------------------------------------------------- | -------------------------------- |
+| `DEVTAB_ENV`                | `dev`                                                | `dev`, `staging` or `prod`       |
+| `DEVTAB_PUBLIC_ADDR`        | `0.0.0.0:8080`                                       |                                  |
+| `DEVTAB_INTERNAL_ADDR`      | `127.0.0.1:8081` in `dev`, `0.0.0.0:8081` otherwise  |                                  |
+| `DEVTAB_DATABASE_URL`       | none: required (`script/api-dev` sets the local one) | `postgres://` or `postgresql://` |
+| `DEVTAB_DB_MAX_CONNECTIONS` | `10`                                                 | greater than 0                   |
+| `DEVTAB_LOG`                | `info`                                               | `tracing` directives             |
+
+Logs are compact lines in `dev` and JSON lines in `staging` and `prod`.
+
+### Layout
+
+```
+Cargo.toml, Cargo.lock    the Rust workspace, its lints and the release profile
+rust-toolchain.toml       the pinned Rust toolchain
+clippy.toml, deny.toml    clippy thresholds; licences, advisories and sources of dependencies
+api/src/main.rs           the binary: serve, healthcheck, version
+api/src/config.rs         DEVTAB_* configuration, every problem reported at once
+api/src/http/             routers, middleware, the error shape, the JSON extractor, health checks
+api/src/store/            the Postgres pool
+api/tests/                HTTP tests without a network; database tests
+db/migrations/            SQL migrations, forward only
+deploy/local/compose.yaml the local database
+script/                   db-up, db-migrate, db-reset, api-dev, api-check, check-all
+.github/workflows/ci.yml  CI: secret scan, the site, the API
+```
 
 ## Licence
 

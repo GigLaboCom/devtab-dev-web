@@ -17,6 +17,11 @@ script/install-hooks
 pnpm install --frozen-lockfile
 pnpm dev        # http://localhost:4321
 pnpm check      # type check, lint, format check, build, tests: run before every commit
+
+# The backend (api/, db/, deploy/): README.md, "Backend".
+script/db-up && script/db-migrate   # the local Postgres and its schema
+script/api-dev                      # the API on :8080 and 127.0.0.1:8081
+script/check-all                    # pnpm check + script/api-check: before every commit touching api/, db/, deploy/
 ```
 
 ## Language
@@ -32,7 +37,10 @@ locale, in its catalogue.
 - Subjects as `area: Sentence`, imperative, no trailing period:
   `i18n: Keep the wordmark in one place`, `site: Add the about page`. Areas
   in use: `repo`, `build`, `i18n`, `site`, `style`, `lint`, `tests`, `docs`,
-  `agents`. Not conventional prefixes (`feat:`, `fix:`).
+  `agents`, `api`, `db`, `deploy`, `ci`. Not conventional prefixes (`feat:`,
+  `fix:`).
+- A commit that touches `api/`, `db/` or `deploy/` passes `script/check-all`
+  (the site and the API) instead of `pnpm check` alone.
 - The body says why, in plain sentences, wrapped at 72 columns.
 
 ## No agent attribution
@@ -72,6 +80,26 @@ any default attribution a tool adds:
   prints 0.
 - No UI framework until a page needs an interactive island; when one does,
   React (as the extension), through `@astrojs/react`.
+
+## Backend
+
+- Rust crates come from crates.io only (`deny.toml`), at versions at least two
+  weeks old, transitive ones included, as `Cargo.lock` records them;
+  `cargo deny check` passes without blanket ignores.
+- No `unsafe` (`unsafe_code = "forbid"`). No `unwrap`/`expect` outside tests
+  and startup; errors are `AppError` and leave the API in one shape,
+  `{"error":"<kebab-case code>","message":"<English text>"}`, with internal
+  details in the log only.
+- Queries: `sqlx::query!` checked against the schema, with offline data in
+  `.sqlx/` committed, from the first migration with data on (stage 2). Until then only
+  untyped queries such as the readiness `select 1`.
+- Migrations in `db/migrations/` only go forward: never edit or delete an
+  applied one; a destructive change is expand, migrate, contract over
+  separate releases. Row level security is enabled on everything a
+  migration creates in `app`.
+- Private keys, secrets and passwords are never in the repository, in CI or
+  in its secrets: they live in files on the server. Thresholds that guard
+  against abuse come from the environment, not the code.
 
 ## Localisation
 
