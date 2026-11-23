@@ -70,7 +70,7 @@ impl Default for Config {
             env: Env::Dev,
             public_addr: SocketAddr::from(([0, 0, 0, 0], 8080)),
             internal_addr: SocketAddr::from(([127, 0, 0, 1], 8081)),
-            database_url: "postgres://devtab_api@127.0.0.1:54330/devtab".to_owned(),
+            database_url: "postgres://devtab_api@127.0.0.1:54330/postgres".to_owned(),
             db_max_connections: 10,
             log: "info".to_owned(),
         }

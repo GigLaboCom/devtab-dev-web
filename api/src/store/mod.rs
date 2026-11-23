@@ -1,4 +1,4 @@
-//! Database access: the Postgres pool. The schema comes from `db/migrations/`.
+//! Database access: the Postgres pool. The schema comes from `supabase/migrations/`.
 
 use std::time::Duration;
 

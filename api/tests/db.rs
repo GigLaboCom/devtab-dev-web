@@ -1,8 +1,8 @@
-//! Database tests against a real Postgres with the migrations of
-//! `db/migrations/` applied, named by `DEVTAB_TEST_DATABASE_URL` (a superuser
-//! URL, such as the `postgres` role of `script/db-up`). Each test runs inside a
-//! transaction that is rolled back. Without the variable the tests are skipped,
-//! so `cargo test` works without a database.
+//! Database tests against the local Supabase Postgres with the migrations of
+//! `supabase/migrations/` applied, named by `DEVTAB_TEST_DATABASE_URL` (the
+//! owner's URL, the `postgres` role that `supabase status` reports). Each test
+//! runs inside a transaction that is rolled back. Without the variable the
+//! tests are skipped, so `cargo test` works without a database.
 #![allow(clippy::unwrap_used)]
 
 use sqlx::{Connection as _, PgConnection};
@@ -35,20 +35,88 @@ async fn schema_app_exists() {
 }
 
 #[tokio::test]
-async fn the_api_role_exists_and_can_log_in_without_a_password() {
+async fn the_api_role_exists_and_can_log_in() {
     let Some(mut conn) = connect().await else {
         return;
     };
-    let (login, bypass_rls, password): (bool, bool, bool) = sqlx::query_as(
-        "select rolcanlogin, rolbypassrls, rolpassword is not null
-         from pg_authid where rolname = 'devtab_api'",
+    let (login, bypass_rls): (bool, bool) = sqlx::query_as(
+        "select rolcanlogin, rolbypassrls from pg_roles where rolname = 'devtab_api'",
     )
     .fetch_one(&mut conn)
     .await
     .unwrap();
     assert!(login, "LOGIN");
     assert!(bypass_rls, "BYPASSRLS");
-    assert!(!password, "the migration sets no password");
+}
+
+/// Each environment gives the API role its own password (locally
+/// `script/db-up`), so the database cannot tell whether a migration set one:
+/// the migrations themselves must not mention one outside their comments.
+#[test]
+fn the_migrations_set_no_password() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../supabase/migrations");
+    let mut migrations = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "sql") {
+            continue;
+        }
+        migrations += 1;
+        let sql = std::fs::read_to_string(&path).unwrap();
+        for (n, line) in sql.lines().enumerate() {
+            let code = line.split("--").next().unwrap().to_ascii_lowercase();
+            assert!(
+                !code.contains("password"),
+                "{}:{}: {line}",
+                path.display(),
+                n + 1
+            );
+        }
+    }
+    assert!(migrations > 0, "no migrations in {}", dir.display());
+}
+
+#[tokio::test]
+async fn the_data_api_roles_get_nothing_in_schema_app() {
+    let Some(mut conn) = connect().await else {
+        return;
+    };
+    for (role, set_role) in [
+        ("anon", "set local role anon"),
+        ("authenticated", "set local role authenticated"),
+        ("service_role", "set local role service_role"),
+    ] {
+        let (usage, create, execute): (bool, bool, bool) = sqlx::query_as(
+            "select has_schema_privilege($1, 'app', 'USAGE'),
+                    has_schema_privilege($1, 'app', 'CREATE'),
+                    has_function_privilege($1, 'app.set_updated_at()', 'EXECUTE')",
+        )
+        .bind(role)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+        assert!(!usage, "{role}: no USAGE on app");
+        assert!(!create, "{role}: no CREATE on app");
+        assert!(!execute, "{role}: no EXECUTE on app.set_updated_at()");
+
+        // What the Data API would do on the role's behalf.
+        let mut tx = conn.begin().await.unwrap();
+        sqlx::query("create table app.data_api_probe (id integer)")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query(set_role).execute(&mut *tx).await.unwrap();
+        let err = sqlx::query("select * from app.data_api_probe")
+            .execute(&mut *tx)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.as_database_error().unwrap().code().as_deref(),
+            Some(PERMISSION_DENIED),
+            "{role}"
+        );
+        tx.rollback().await.unwrap();
+    }
 }
 
 #[tokio::test]
