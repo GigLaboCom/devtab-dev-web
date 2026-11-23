@@ -1,0 +1,49 @@
+# cargo-deny: advisories, licences, bans and sources of the Rust dependencies.
+# Run `cargo deny check` (script/api-check does).
+
+[graph]
+all-features = false
+
+[advisories]
+# The RustSec advisory database; unmaintained crates reported for direct
+# dependencies of the workspace only.
+unmaintained = "workspace"
+ignore = [
+  # url 2.5.8: a stack overflow in Url::origin() on nested blob: URLs. The fix,
+  # url 2.5.9, was published on 2026-11-20 and is younger than the two weeks
+  # every dependency must have. Only sqlx depends on url, and the one URL it
+  # parses is the database URL from the environment. From 2026-12-04:
+  # `cargo update -p url --precise 2.5.9`, then delete this entry.
+  { id = "RUSTSEC-2026-0592", reason = "the fix is younger than two weeks; no URL from outside is parsed" },
+]
+
+[licenses]
+# Permissive licences only, plus MPL-2.0 (file-level copyleft) for later use.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+# The workspace's own crates are not published and carry no licence yet.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

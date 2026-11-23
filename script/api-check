@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# Every check of the API, in order: rustfmt, clippy with warnings as errors,
+# the tests (the database tests against the local database from script/db-up
+# with the migrations applied) and cargo deny. CI runs the same.
+#
+#   script/api-check
+#
+# DEVTAB_TEST_DATABASE_URL names another database for the tests (a superuser
+# URL; default: the local one).
+
+set -euo pipefail
+
+root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+cd "$root"
+
+cargo fmt --all -- --check
+# Clippy reports a warm cache as clean for lints it never re-evaluated: touch
+# the crate roots so that it checks them again.
+touch api/src/lib.rs api/src/main.rs
+cargo clippy --workspace --all-targets -- -D warnings
+DEVTAB_TEST_DATABASE_URL="${DEVTAB_TEST_DATABASE_URL:-postgres://postgres@127.0.0.1:54330/devtab}" \
+  cargo test --workspace
+cargo deny check
