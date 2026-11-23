@@ -4,6 +4,6 @@ node_modules/
 pnpm-lock.yaml
 target/
 api/
-db/
+supabase/
 .sqlx/
 Cargo.lock

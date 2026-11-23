@@ -6,7 +6,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['dist/', '.astro/', 'node_modules/', 'target/', 'api/'] },
+  { ignores: ['dist/', '.astro/', 'node_modules/', 'target/', 'api/', 'supabase/'] },
   js.configs.recommended,
   tseslint.configs.recommended,
   // The Astro parser for .astro files; it must come after the TypeScript rules.

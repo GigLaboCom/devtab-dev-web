@@ -2,9 +2,12 @@
 node_modules/
 dist/
 .astro/
-# Rust build output; local tools and state (such as .state/tools/bin/sqlx)
+# Rust build output; local state (such as the API role's local password)
 /target/
 /.state/
+# The Supabase CLI's local bookkeeping
+/supabase/.temp/
+/supabase/.branches/
 # Local environment
 .env
 .env.*
