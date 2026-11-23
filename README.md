@@ -153,6 +153,14 @@ scaffold: health checks, the error shape, the middleware and the first
 migration. The site does not call it yet, and the site's build does not
 change because of it.
 
+The backend stands on [Supabase](https://supabase.com): its Postgres holds the
+API's data, and Supabase Auth will hold the users, so both are managed the
+same way. Locally that is the Supabase CLI's stack in Docker
+(`supabase/config.toml`). The API connects to Postgres directly, as
+`devtab_api`; schema `app` is not exposed through Supabase's Data API, and
+its roles (`anon`, `authenticated`, `service_role`) have no privilege in it.
+No hosted Supabase project is linked to this repository yet.
+
 Every error answers
 `{"error":"<kebab-case code>","message":"<English text>"}`.
 
@@ -160,42 +168,75 @@ Every error answers
 
 - [rustup](https://rustup.rs); `rust-toolchain.toml` pins Rust 1.94.1 with
   rustfmt and clippy, and rustup installs it on first use.
-- Docker with Compose v2.20 or newer, for the local database.
-- sqlx-cli 0.9 (the same branch as the `sqlx` crate), installed into the
-  repository's ignored `.state/tools/`, which the `script/db-*` scripts use
-  first; a sqlx-cli 0.9 on `PATH` works too:
-  `cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres --root .state/tools`
+- Docker, for the local Supabase stack.
+- The [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
+  2.54.11, the release CI pins (a package manager or a release binary, as
+  its documentation says). The scripts run it with `SUPABASE_TELEMETRY_DISABLED=1`
+  and `DO_NOT_TRACK=1`; this release collects no usage data, later ones read
+  those variables.
+- `psql` (from any Postgres 15 or newer client), with which `script/db-up`
+  gives the API role its local password.
 - cargo-deny: `cargo install cargo-deny --locked`.
 
 ### Commands
 
-| Command             | What it does                                                                                       |
-| ------------------- | -------------------------------------------------------------------------------------------------- |
-| `script/db-up`      | Starts Postgres 17 on `127.0.0.1:54330` (database `devtab`, no passwords) and prints the URLs      |
-| `script/db-migrate` | Applies the migrations in `db/migrations/` as the owner                                            |
-| `script/db-reset`   | Drops the database and applies every migration from zero                                           |
-| `script/api-dev`    | Runs the API against the local database as `devtab_api`                                            |
-| `script/api-check`  | `cargo fmt --check`, clippy with `-D warnings`, the tests (with the database), `cargo deny`        |
-| `script/check-all`  | `pnpm check`, then `script/api-check`: what CI checks, before a commit to `api/`, `db/`, `deploy/` |
+| Command             | What it does                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| `script/db-up`      | Starts the local Supabase Postgres alone (port 54330, database `postgres`) and prints the URLs  |
+| `script/db-migrate` | Applies the migrations in `supabase/migrations/` that the local database does not have yet      |
+| `script/db-reset`   | Recreates the local database and applies every migration from zero                              |
+| `script/api-dev`    | Runs the API against the local database as `devtab_api`                                         |
+| `script/api-check`  | `cargo fmt --check`, clippy with `-D warnings`, the tests (with the database), `cargo deny`     |
+| `script/check-all`  | `pnpm check`, then `script/api-check`: what CI checks, before a commit to `api/` or `supabase/` |
 
 ```bash
-script/db-up && script/db-migrate
+script/db-up
 script/api-dev                       # in another terminal:
 curl -fsS localhost:8080/api/readyz  # {"status":"ok"}
 ```
+
+On its first start the CLI creates the database and applies every migration;
+`script/db-up` then gives `devtab_api` a password generated on this machine
+into the ignored `.state/devtab_api.password`, and `script/api-dev` reads it
+from there. Nothing secret is in the repository: the scripts read the
+database's URL from `supabase status -o env`. `script/db-migrate` and
+`script/db-reset` set the password again, since a reset creates the role
+anew.
 
 `DEVTAB_PUBLIC_ADDR`, `DEVTAB_INTERNAL_ADDR` move the listeners (for example
 when 8080 or 8081 is taken); `devtab-api healthcheck` reads the same
 `DEVTAB_PUBLIC_ADDR`. The database tests (`api/tests/db.rs`) run when
 `DEVTAB_TEST_DATABASE_URL` names a database with the migrations applied;
 `script/api-check` points it at the local one, plain `cargo test` skips them.
-Stop the database with `docker compose -f deploy/local/compose.yaml stop db`;
-its data stays in the Docker volume `devtab-local_devtab_db`.
+
+Stop the stack with `supabase stop`; its data stays in Docker volumes
+(`supabase stop --no-backup` deletes them). The local stack uses ports
+54330-54337, away from the CLI's defaults, so it runs next to another
+Supabase project's stack. The CLI publishes them on every interface of the
+machine, not only the loopback address, and the owner's password is the
+CLI's well-known default: keep the machine's firewall on.
+
+So far the scripts start Postgres alone. Auth, the Data API, Studio and the
+mail catcher are a dozen more containers, needed once sign-in is built:
+`supabase start` starts the whole stack (`supabase status` then lists its
+URLs; Studio on http://127.0.0.1:54333). Auth allows e-mail sign-in only; no
+external provider is configured.
+
+Nobody runs `supabase login`, `supabase link`, `supabase db push` or any
+other command that talks to a hosted project without the owner's word.
 
 Dependencies come from crates.io only (`deny.toml`), at versions published at
 least two weeks before they are locked, transitive ones included: after
 `cargo update`, check the new versions' dates and step back a patch where
 needed (`cargo update -p <crate> --precise <version>`).
+
+### Migrations
+
+`supabase/migrations/<timestamp>_<name>.sql`, applied in order by the
+Supabase CLI and recorded in the database; `supabase migration new <name>`
+creates the next file. They only go forward: an applied migration is never
+edited or deleted. Every object a migration creates in `app` gets row level
+security, and nothing in `app` is granted to the Data API's roles.
 
 ### Configuration
 
@@ -221,9 +262,9 @@ api/src/config.rs         DEVTAB_* configuration, every problem reported at once
 api/src/http/             routers, middleware, the error shape, the JSON extractor, health checks
 api/src/store/            the Postgres pool
 api/tests/                HTTP tests without a network; database tests
-db/migrations/            SQL migrations, forward only
-deploy/local/compose.yaml the local database
-script/                   db-up, db-migrate, db-reset, api-dev, api-check, check-all
+supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
+supabase/migrations/      SQL migrations, forward only
+script/                   db-up, db-migrate, db-reset, api-dev, api-check, check-all; lib/supabase.sh
 .github/workflows/ci.yml  CI: secret scan, the site, the API
 ```
 

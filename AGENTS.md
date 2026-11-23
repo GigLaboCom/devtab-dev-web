@@ -18,10 +18,11 @@ pnpm install --frozen-lockfile
 pnpm dev        # http://localhost:4321
 pnpm check      # type check, lint, format check, build, tests: run before every commit
 
-# The backend (api/, db/, deploy/): README.md, "Backend".
-script/db-up && script/db-migrate   # the local Postgres and its schema
-script/api-dev                      # the API on :8080 and 127.0.0.1:8081
-script/check-all                    # pnpm check + script/api-check: before every commit touching api/, db/, deploy/
+# The backend (api/, supabase/): README.md, "Backend". Needs Docker and the Supabase CLI.
+script/db-up        # the local Supabase Postgres alone, migrations applied
+script/db-migrate   # the migrations it does not have yet
+script/api-dev      # the API on :8080 and 127.0.0.1:8081
+script/check-all    # pnpm check + script/api-check: before every commit touching api/ or supabase/
 ```
 
 ## Language
@@ -39,7 +40,7 @@ locale, in its catalogue.
   in use: `repo`, `build`, `i18n`, `site`, `style`, `lint`, `tests`, `docs`,
   `agents`, `api`, `db`, `deploy`, `ci`. Not conventional prefixes (`feat:`,
   `fix:`).
-- A commit that touches `api/`, `db/` or `deploy/` passes `script/check-all`
+- A commit that touches `api/` or `supabase/` passes `script/check-all`
   (the site and the API) instead of `pnpm check` alone.
 - The body says why, in plain sentences, wrapped at 72 columns.
 
@@ -93,13 +94,29 @@ any default attribution a tool adds:
 - Queries: `sqlx::query!` checked against the schema, with offline data in
   `.sqlx/` committed, from the first migration with data on (stage 2). Until then only
   untyped queries such as the readiness `select 1`.
-- Migrations in `db/migrations/` only go forward: never edit or delete an
+- The database and the users are Supabase's: Postgres and Supabase Auth.
+  Locally that is the Supabase CLI's stack (`supabase/config.toml`); the
+  scripts start Postgres alone until sign-in needs more.
+- Migrations live in `supabase/migrations/<timestamp>_<name>.sql` and are
+  applied by the Supabase CLI. They only go forward: never edit or delete an
   applied one; a destructive change is expand, migrate, contract over
   separate releases. Row level security is enabled on everything a
   migration creates in `app`.
+- Schema `app` is reachable only by the API, as `devtab_api`, directly over
+  Postgres. It is never listed in the Data API's schemas, and nothing in it
+  is granted to `anon`, `authenticated` or `service_role`.
+- No command that talks to a hosted Supabase project without the owner's
+  word: no `supabase login`, `supabase link`, `supabase db push`, no
+  `projects`, `secrets` or `functions deploy`. Local commands only. Which
+  sign-in providers to offer is the owner's decision; none is configured.
+- The Supabase CLI runs with `SUPABASE_TELEMETRY_DISABLED=1` and
+  `DO_NOT_TRACK=1` (`script/lib/supabase.sh`, CI).
 - Private keys, secrets and passwords are never in the repository, in CI or
-  in its secrets: they live in files on the server. Thresholds that guard
-  against abuse come from the environment, not the code.
+  in its secrets: they live in files on the server. The local stack's keys
+  and URLs are read from `supabase status` at run time, never written into
+  a tracked file; the API role's local password is generated into the
+  ignored `.state/`. Thresholds that guard against abuse come from the
+  environment, not the code.
 
 ## Localisation
 
