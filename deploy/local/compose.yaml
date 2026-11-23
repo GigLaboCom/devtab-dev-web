@@ -1,0 +1,26 @@
+# The local database for the API: Postgres 17 on 127.0.0.1:54330, database
+# `devtab`. No passwords: the server trusts every connection, and the port is
+# published on the loopback address only. Start it with script/db-up, apply the
+# migrations with script/db-migrate.
+
+name: devtab-local
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: devtab
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - '127.0.0.1:54330:5432'
+    volumes:
+      - devtab_db:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP: the first start's temporary server listens on the socket only.
+      test: ['CMD', 'pg_isready', '-U', 'postgres', '-d', 'devtab', '-h', '127.0.0.1']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  devtab_db:

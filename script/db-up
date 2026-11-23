@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#
+# Starts the local database for the API (deploy/local/compose.yaml): Postgres
+# 17 on 127.0.0.1:54330, database `devtab`, its data in the Docker volume
+# devtab_db. Waits until it accepts connections, then prints the two
+# connection strings. Apply the migrations next: script/db-migrate.
+#
+#   script/db-up
+#
+# Stop it with: docker compose -f deploy/local/compose.yaml stop db
+
+set -euo pipefail
+
+root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+
+docker compose -f "$root/deploy/local/compose.yaml" up -d --wait db
+
+echo "Postgres is up. Connection strings:"
+echo "  owner (migrations, tests): postgres://postgres@127.0.0.1:54330/devtab"
+echo "  API (after db-migrate):    postgres://devtab_api@127.0.0.1:54330/devtab"
