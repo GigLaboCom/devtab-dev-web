@@ -58,25 +58,28 @@ jobs:
     name: api
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-          POSTGRES_DB: devtab
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d devtab -h 127.0.0.1"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 30
     env:
-      DATABASE_OWNER_URL: postgres://postgres@127.0.0.1:5432/devtab
+      # Usage data off. CLI 2.54 collects none; later releases read these two.
+      SUPABASE_TELEMETRY_DISABLED: '1'
+      DO_NOT_TRACK: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The same CLI release as on a developer's machine; local commands only.
+      - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: 2.54.11
+      # Postgres of the local stack (supabase/config.toml), no other service.
+      - name: Start Supabase (Postgres only)
+        run: supabase db start
+      - name: Migrations apply from zero
+        run: supabase db reset --local
+      - name: The database's URL from the CLI
+        run: |
+          url="$(supabase status -o env | sed -n 's/^DB_URL="\(.*\)"$/\1/p')"
+          test -n "$url"
+          echo "DEVTAB_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
       - name: Rust toolchain from rust-toolchain.toml
         uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
@@ -88,18 +91,10 @@ jobs:
         with:
           tool: cargo-deny@0.20.2
           fallback: none
-      # sqlx-cli publishes no release binaries; built from crates.io like on a
-      # developer's machine (rust-cache keeps ~/.cargo/bin between runs).
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres
-      - name: Migrations apply from zero
-        run: sqlx migrate run --source db/migrations --database-url "$DATABASE_OWNER_URL"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: cargo test (with the database)
         run: cargo test --locked --workspace
-        env:
-          DEVTAB_TEST_DATABASE_URL: ${{ env.DATABASE_OWNER_URL }}
       - name: Release build
         run: cargo build --locked --release -p devtab-api
       - run: cargo deny check
