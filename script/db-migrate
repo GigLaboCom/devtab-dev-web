@@ -1,27 +1,15 @@
 #!/usr/bin/env bash
 #
-# Applies the migrations in db/migrations/ that the database does not have
-# yet, as the database owner. sqlx-cli of the 0.9 branch, like the sqlx crate
-# of the API: the copy in .state/tools/ if it is there, otherwise the one on
-# PATH (README.md, "Backend", says how to install it).
+# Applies the migrations in supabase/migrations/ that the local database does
+# not have yet (supabase migration up --local), then gives the API role its
+# local password, in case a migration has just created it.
 #
 #   script/db-migrate
-#
-# DEVTAB_ADMIN_DATABASE_URL names another database (default: the local one
-# from script/db-up).
 
 set -euo pipefail
 
-root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+# shellcheck source=lib/supabase.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/supabase.sh"
 
-sqlx="$root/.state/tools/bin/sqlx"
-if [[ ! -x "$sqlx" ]]; then sqlx="$(command -v sqlx 2>/dev/null || true)"; fi
-version="$([[ -n "$sqlx" ]] && "$sqlx" --version 2>/dev/null || true)"
-if [[ "$version" != "sqlx-cli 0.9."* ]]; then
-  echo "sqlx-cli 0.9 is not installed. Install it into the repository (ignored by git):" >&2
-  echo "  cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres --root .state/tools" >&2
-  exit 1
-fi
-
-"$sqlx" migrate run --source "$root/db/migrations" \
-  --database-url "${DEVTAB_ADMIN_DATABASE_URL:-postgres://postgres@127.0.0.1:54330/devtab}"
+supabase_cli migration up --local
+set_api_password

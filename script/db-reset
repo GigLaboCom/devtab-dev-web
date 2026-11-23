@@ -1,26 +1,16 @@
 #!/usr/bin/env bash
 #
-# Drops the database, creates it again and applies every migration in
-# db/migrations/ from zero. Everything in the database is lost; the API role
-# belongs to the server and stays. sqlx-cli as in script/db-migrate.
+# Recreates the local database and applies every migration in
+# supabase/migrations/ from zero (supabase db reset --local). Everything in
+# the database is lost, the API role included; it gets its local password
+# from .state/ again.
 #
 #   script/db-reset
-#
-# DEVTAB_ADMIN_DATABASE_URL names another database (default: the local one
-# from script/db-up).
 
 set -euo pipefail
 
-root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+# shellcheck source=lib/supabase.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/supabase.sh"
 
-sqlx="$root/.state/tools/bin/sqlx"
-if [[ ! -x "$sqlx" ]]; then sqlx="$(command -v sqlx 2>/dev/null || true)"; fi
-version="$([[ -n "$sqlx" ]] && "$sqlx" --version 2>/dev/null || true)"
-if [[ "$version" != "sqlx-cli 0.9."* ]]; then
-  echo "sqlx-cli 0.9 is not installed. Install it into the repository (ignored by git):" >&2
-  echo "  cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres --root .state/tools" >&2
-  exit 1
-fi
-
-"$sqlx" database reset -y --source "$root/db/migrations" \
-  --database-url "${DEVTAB_ADMIN_DATABASE_URL:-postgres://postgres@127.0.0.1:54330/devtab}"
+supabase_cli db reset --local
+set_api_password

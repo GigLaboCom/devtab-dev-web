@@ -2,18 +2,25 @@
 #
 # Runs the API in development: the public listener on :8080 (/api/healthz,
 # /api/readyz) and the internal one on 127.0.0.1:8081 (/internal/healthz),
-# against the local database from script/db-up as the API role. Stop it with
-# Ctrl-C; it finishes the requests in flight first.
+# against the local database from script/db-up as the API role, with its
+# password from .state/. Stop it with Ctrl-C; it finishes the requests in
+# flight first.
 #
 #   script/api-dev
 #
 # Every DEVTAB_* variable passes through, for example
-# DEVTAB_PUBLIC_ADDR=127.0.0.1:9080 or DEVTAB_LOG=devtab_api=debug,info.
+# DEVTAB_PUBLIC_ADDR=127.0.0.1:9080 or DEVTAB_LOG=devtab_api=debug,info;
+# DEVTAB_DATABASE_URL names another database.
 
 set -euo pipefail
 
-root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+# shellcheck source=lib/supabase.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/supabase.sh"
 cd "$root"
 
-DEVTAB_DATABASE_URL="${DEVTAB_DATABASE_URL:-postgres://devtab_api@127.0.0.1:54330/devtab}" \
-  exec cargo run -p devtab-api -- serve
+if [[ -z "${DEVTAB_DATABASE_URL:-}" ]]; then
+  DEVTAB_DATABASE_URL="$(api_db_url)"
+fi
+export DEVTAB_DATABASE_URL
+
+exec cargo run -p devtab-api -- serve

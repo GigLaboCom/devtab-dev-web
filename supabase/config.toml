@@ -1,0 +1,120 @@
+# The local Supabase stack for development and CI (Supabase CLI). Reference:
+# https://supabase.com/docs/guides/local-development/cli/config
+# Only what differs from the CLI's defaults, or matters to this project, is
+# set here; no hosted project is linked to this repository.
+
+# Names this stack's containers and volumes, apart from other Supabase projects.
+project_id = "devtab-dev-web"
+
+# Ports 54330-54337: away from the CLI's defaults (54320-54329, 8083), so that
+# another project's stack on the defaults keeps working next to this one.
+
+[api]
+enabled = true
+port = 54332
+# The Data API (PostgREST) serves only Supabase's own schemas. `app` is never
+# listed: application data is reachable only through the Rust API.
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[api.tls]
+enabled = false
+
+[db]
+# The database the scripts and the API connect to, as in the README.
+port = 54330
+shadow_port = 54331
+# The major version of the hosted database this one stands in for.
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 54335
+
+[db.migrations]
+enabled = true
+
+[db.seed]
+# No seed data yet.
+enabled = false
+
+[realtime]
+# Not used yet.
+enabled = false
+
+[studio]
+enabled = true
+port = 54333
+api_url = "http://127.0.0.1"
+
+# Catches the mail Auth sends locally; nothing leaves the machine.
+[inbucket]
+enabled = true
+port = 54334
+
+[storage]
+# Not used yet.
+enabled = false
+
+[auth]
+enabled = true
+# The site's development server; every redirect stays on the loopback address.
+site_url = "http://127.0.0.1:4321"
+additional_redirect_urls = ["http://127.0.0.1:4321/**", "http://localhost:4321/**"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+enable_anonymous_sign_ins = false
+enable_manual_linking = false
+minimum_password_length = 6
+password_requirements = ""
+# No captcha and no external sign-in provider (Apple, GitHub, Google, ...):
+# every provider is off unless a section here enables it, and which ones to
+# offer is the owner's decision. No client ids or secrets belong in this file.
+
+[auth.rate_limit]
+email_sent = 2
+sms_sent = 30
+anonymous_users = 30
+token_refresh = 150
+sign_in_sign_ups = 30
+token_verifications = 30
+web3 = 30
+
+# E-mail sign-in: a link or a one-time code; the mail goes to inbucket locally.
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+secure_password_change = false
+max_frequency = "1s"
+otp_length = 6
+otp_expiry = 3600
+
+[auth.sms]
+enable_signup = false
+enable_confirmations = false
+
+[auth.mfa.totp]
+enroll_enabled = false
+verify_enabled = false
+
+[auth.mfa.phone]
+enroll_enabled = false
+verify_enabled = false
+
+[auth.web3.solana]
+enabled = false
+
+[edge_runtime]
+# Not used yet.
+enabled = false
+inspector_port = 54337
+
+[analytics]
+# Not used yet.
+enabled = false
+port = 54336
+backend = "postgres"

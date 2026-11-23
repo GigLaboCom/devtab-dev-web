@@ -1,15 +1,18 @@
 -- Schema `app` holds every application table. Only the API role reads and
--- writes it; nobody else gets any privilege on it. Migrations run as the
--- database owner and only ever go forward.
+-- writes it; nobody else gets any privilege on it. It is not exposed through
+-- Supabase's Data API (supabase/config.toml, [api] schemas), and the Data API
+-- roles `anon`, `authenticated` and `service_role` get nothing in it either:
+-- the browser's key is public, so every read and write goes through the API.
+-- Migrations run as the database owner (`postgres`) and only ever go forward.
 
 create schema if not exists app;
 
-revoke all on schema app from public;
-alter default privileges in schema app revoke all on tables from public;
-alter default privileges in schema app revoke all on sequences from public;
+revoke all on schema app from public, anon, authenticated, service_role;
+alter default privileges in schema app revoke all on tables from public, anon, authenticated, service_role;
+alter default privileges in schema app revoke all on sequences from public, anon, authenticated, service_role;
 -- A per-schema default cannot take away the global EXECUTE that public has on
 -- new functions, so every function in `app` also revokes it itself.
-alter default privileges in schema app revoke all on functions from public;
+alter default privileges in schema app revoke all on functions from public, anon, authenticated, service_role;
 
 -- Shared trigger function for tables with an `updated_at` column.
 create function app.set_updated_at() returns trigger
@@ -21,10 +24,11 @@ begin
   return new;
 end;
 $$;
-revoke execute on function app.set_updated_at() from public;
+revoke execute on function app.set_updated_at() from public, anon, authenticated, service_role;
 
--- The role the API connects as. Created without a password: each environment
--- sets its own outside the repository (local development trusts 127.0.0.1).
+-- The role the API connects as, directly to Postgres. Created without a
+-- password: each environment sets its own outside the repository (locally
+-- script/db-up generates one into the ignored .state/).
 -- BYPASSRLS because the API is the only reader and writer and does its own
 -- authorisation; row level security on every table stays a second line.
 do $$
