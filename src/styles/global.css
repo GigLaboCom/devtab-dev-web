@@ -1,6 +1,11 @@
 @import 'tailwindcss';
 @import './tokens.css';
 
+/* Tailwind reads class names from every file git does not ignore; the backend's files have none. */
+@source not '../../{api,db,deploy,.github}';
+@source not '../../script/{api-*,db-*,check-all}';
+@source not '../../{Cargo.toml,Cargo.lock,rust-toolchain.toml,clippy.toml,deny.toml}';
+
 /* Tailwind utilities read the tokens at run time (`bg-background` → var(--background)). */
 @theme inline {
   --color-background: var(--background);

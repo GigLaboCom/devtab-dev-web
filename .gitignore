@@ -2,6 +2,9 @@
 node_modules/
 dist/
 .astro/
+# Rust build output; local tools and state (such as .state/tools/bin/sqlx)
+/target/
+/.state/
 # Local environment
 .env
 .env.*

@@ -2,3 +2,8 @@ dist/
 .astro/
 node_modules/
 pnpm-lock.yaml
+target/
+api/
+db/
+.sqlx/
+Cargo.lock
