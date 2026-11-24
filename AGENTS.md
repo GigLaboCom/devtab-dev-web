@@ -18,11 +18,15 @@ pnpm install --frozen-lockfile
 pnpm dev        # http://localhost:4321
 pnpm check      # type check, lint, format check, build, tests: run before every commit
 
-# The backend (api/, supabase/): README.md, "Backend". Needs Docker and the Supabase CLI.
-script/db-up        # the local Supabase Postgres alone, migrations applied
-script/db-migrate   # the migrations it does not have yet
-script/api-dev      # the API on :8080 and 127.0.0.1:8081
-script/check-all    # pnpm check + script/api-check: before every commit touching api/ or supabase/
+# The backend (api/, supabase/, config/, contract/): README.md, "Backend".
+# Needs Docker and the Supabase CLI.
+script/db-up          # the local Supabase Postgres alone, migrations applied
+script/db-migrate     # the migrations it does not have yet
+script/api-dev        # the API on :8080 and 127.0.0.1:8081, signing with a local test key
+script/sqlx-prepare   # .sqlx/ from the local database, after changing a query or a migration
+pnpm test:contract    # the licence contract on the extension's side
+script/check-all      # pnpm check + pnpm test:contract + script/api-check: before every
+                      # commit touching api/, supabase/, config/, contract/ or .sqlx/
 ```
 
 ## Language
@@ -40,8 +44,9 @@ locale, in its catalogue.
   in use: `repo`, `build`, `i18n`, `site`, `style`, `lint`, `tests`, `docs`,
   `agents`, `api`, `db`, `deploy`, `ci`. Not conventional prefixes (`feat:`,
   `fix:`).
-- A commit that touches `api/` or `supabase/` passes `script/check-all`
-  (the site and the API) instead of `pnpm check` alone.
+- A commit that touches `api/`, `supabase/`, `config/`, `contract/` or
+  `.sqlx/` passes `script/check-all` (the site, the contract and the API)
+  instead of `pnpm check` alone.
 - The body says why, in plain sentences, wrapped at 72 columns.
 
 ## No agent attribution
@@ -67,6 +72,10 @@ any default attribution a tool adds:
   `dist/`, `.astro/`, screenshots and reports (keep them in `.scratch/` or
   outside the repository).
 - Nothing from the sibling repositories: this site imports nothing from them.
+  The one exception is the byte copies of the extension's side of the
+  licence contract in `contract/licence-v1/verifier/` (and its vectors),
+  which only `script/contract-sync` writes, with their checksums; never edit
+  them by hand.
 
 ## Dependencies
 
@@ -91,9 +100,21 @@ any default attribution a tool adds:
   and startup; errors are `AppError` and leave the API in one shape,
   `{"error":"<kebab-case code>","message":"<English text>"}`, with internal
   details in the log only.
-- Queries: `sqlx::query!` checked against the schema, with offline data in
-  `.sqlx/` committed, from the first migration with data on (stage 2). Until then only
-  untyped queries such as the readiness `select 1`.
+- Queries: `sqlx::query!` checked against the schema, every relation named with
+  its schema (`app.licences`), with the offline data in `.sqlx/` committed.
+  After changing a query or a migration, `script/db-migrate` and
+  `script/sqlx-prepare`, and commit `.sqlx/` with the change; checks build
+  with `SQLX_OFFLINE=true`. Untyped queries only where no schema is involved
+  (the readiness `select 1`) and in tests.
+- Logic that depends on the time takes a `Clock` (`api/src/clock.rs`), never
+  the system time directly, so that tests move time instead of sleeping. SQL
+  that decides by time gets the time as a parameter, not `now()`.
+- Licence keys and installation secrets are stored only as SHA-256 hashes and
+  never logged; logs carry a licence id and the first four characters of an
+  installation id, never a key, a secret, a token, an e-mail address or an IP
+  address.
+- Every change made through `devtab-api admin` writes an `app.admin_audit`
+  row in the same transaction, with no personal data in it.
 - The database and the users are Supabase's: Postgres and Supabase Auth.
   Locally that is the Supabase CLI's stack (`supabase/config.toml`); the
   scripts start Postgres alone until sign-in needs more.
@@ -112,7 +133,11 @@ any default attribution a tool adds:
 - The Supabase CLI runs with `SUPABASE_TELEMETRY_DISABLED=1` and
   `DO_NOT_TRACK=1` (`script/lib/supabase.sh`, CI).
 - Private keys, secrets and passwords are never in the repository, in CI or
-  in its secrets: they live in files on the server. The local stack's keys
+  in its secrets: they live in files on the server. That holds for test keys
+  too: tests make theirs in memory, `script/api-dev` makes a developer's in
+  the ignored `.state/`, and the contract's vectors are signed by a key made
+  for one run and never stored. `config/signing-keys.json` and
+  `contract/licence-v1/production-keys.json` never list a test key. The local stack's keys
   and URLs are read from `supabase status` at run time, never written into
   a tracked file; the API role's local password is generated into the
   ignored `.state/`. Thresholds that guard against abuse come from the

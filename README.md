@@ -144,18 +144,18 @@ for another address; run the tests with the same `SITE_URL`.
 ## Backend (`api/`)
 
 `devtab-api` is the site's backend: one Rust binary (axum, tokio, sqlx) with
-two listeners. The public one (`:8080`) answers `/api/healthz` and
-`/api/readyz`; the internal one (`127.0.0.1:8081` in development) answers
-`/internal/healthz` and is meant only for the site's own pages, never
-published. It reads its configuration from `DEVTAB_*` variables and keeps its
-data in Postgres 17, schema `app`, as the role `devtab_api`. So far it is a
-scaffold: health checks, the error shape, the middleware and the first
-migration. The site does not call it yet, and the site's build does not
-change because of it.
+two listeners. The public one (`:8080`) answers `/api/healthz`,
+`/api/readyz` and the extension's licence endpoints, `POST /v1/activate`,
+`/v1/refresh` and `/v1/deactivate`; the internal one (`127.0.0.1:8081` in
+development) answers `/internal/healthz` and is meant only for the site's own
+pages, never published. It reads its configuration from `DEVTAB_*` variables
+and keeps its data in Postgres 17, schema `app`, as the role `devtab_api`.
+The site does not call it yet, and the site's build does not change because
+of it.
 
 The backend stands on [Supabase](https://supabase.com): its Postgres holds the
-API's data, and Supabase Auth will hold the users, so both are managed the
-same way. Locally that is the Supabase CLI's stack in Docker
+API's data, and Supabase Auth holds the users, so both are managed the same
+way. Locally that is the Supabase CLI's stack in Docker
 (`supabase/config.toml`). The API connects to Postgres directly, as
 `devtab_api`; schema `app` is not exposed through Supabase's Data API, and
 its roles (`anon`, `authenticated`, `service_role`) have no privilege in it.
@@ -163,6 +163,74 @@ No hosted Supabase project is linked to this repository yet.
 
 Every error answers
 `{"error":"<kebab-case code>","message":"<English text>"}`.
+
+### Licences
+
+A user is a user of Supabase Auth: a trigger on `auth.users` gives each one a
+row in `app.users`. A licence belongs to a user (or, issued free of charge, to
+nobody), has a plan, a number of seats and a key; the extension activates an
+installation with the key and keeps it going with the installation's secret
+and the signed token the server returns.
+
+- **Key**: `DTD-XXXX-XXXX-XXXX-XXXX-XXXX`, 100 random bits in Crockford base32,
+  shown once and stored only as the SHA-256 of its canonical form (upper
+  case, no spaces or hyphens, `O` read as `0`, `I` and `L` as `1`). A licence
+  id is `lic_` and 26 characters of 16 random bytes; an installation's secret
+  is 32 random bytes in base64url, stored as its SHA-256.
+- **Token**: a compact JWS signed with ES256 (deterministic ECDSA), header
+  `{"alg":"ES256","kid":…,"typ":"devtab-licence"}`. Its dates follow one rule:
+  with `end` the end of what was paid (plus 14 days for a subscription's
+  payment retries), `exp = min(iat + 30 d, end)`, `chk = min(iat + 7 d, exp)`,
+  `warn = max(exp − 7 d, chk)`; past `end` the token says `ended`.
+- **Seats**: activating takes a seat while the licence has one free and fewer
+  than 3 × seats new activations in 30 days; activating the same installation
+  again only replaces its secret. An installation not seen for 60 days loses
+  its seat (the scheduler, hourly, under a Postgres advisory lock) and gets
+  it back at its next check if one is free.
+- **Signing keys**: the public keys are `config/signing-keys.json`, built into
+  the binary. The private key is a file on the server
+  (`DEVTAB_SIGNING_KEY_FILE`, id `DEVTAB_SIGNING_KID`), never in the
+  repository, the environment, the database or CI; `serve` refuses to start
+  unless it is the trusted key of that id and the key's `sign_from` has come.
+  No private key is in the repository, not even a test one, and the
+  published list stays empty until production keys exist. In `dev` the API
+  also trusts a developer's own test keys, listed in the file
+  `DEVTAB_DEV_SIGNING_KEYS_FILE`: `script/api-dev` makes one on first use
+  (`admin keys generate --test`) in the ignored `.state/signing/`, the
+  private key with mode 600. `staging` and `prod` refuse that setting and
+  any `test-` key. Tests make their keys in memory.
+
+### The contract with the extension
+
+`contract/licence-v1/` is the machine-readable contract of the licence
+endpoints: JSON Schemas of the request and answer bodies and of the token's
+header and claims, `errors.json` (codes, HTTP statuses, which endpoint answers
+which), `production-keys.json` (empty until production keys exist) and
+`server-vectors.json`: tokens this server signs, one per case of the issuing
+rules and per revoke reason, plus broken ones, each with what the extension's
+`verifyToken` and `evaluate` must say. They are signed by a test key made for
+one run, whose public half is in the file and whose private half was never
+stored. `cargo test --test contract` checks that every token verifies with
+that public key and that its claims are what the code issues for its case;
+after a change to the issuing rules,
+`DEVTAB_WRITE_VECTORS=1 cargo test -p devtab-api --test contract server_vectors`
+writes the file again with a new key.
+
+`contract/licence-v1/verifier/` and `extension-vectors.json` are byte copies
+of the extension's side: its token check and state function
+(`packages/licence/lib/{verify,state,base64url,types}.ts`), its test vectors,
+and the contract's rules as code (`scripts/mock-backend/contract.mjs`).
+`script/contract-sync <path to a clone of the extension>` (or
+`DEVTAB_EXTENSION_DIR=<path>`) refreshes them and records their checksums in
+`SOURCES.sha256`; nothing is imported from that repository otherwise.
+`pnpm test:contract` runs the backend's tokens and the extension's own
+vectors through the copied check and state function, holds the issued claims
+to the contract's issuing rules case by case, and the copies to their
+checksums (`script/contract-sync --check` checks only the last). The
+extension's modules import each other without file extensions; the test
+resolves those with Node's own resolve hook (`node:module`), so the copies
+stay as they are and no dependency is added. `cargo test --test contract`
+runs the extension's vectors through the server's check.
 
 ### Requirements
 
@@ -177,17 +245,23 @@ Every error answers
 - `psql` (from any Postgres 15 or newer client), with which `script/db-up`
   gives the API role its local password.
 - cargo-deny: `cargo install cargo-deny --locked`.
+- sqlx-cli 0.9.0, the release of the sqlx crate: `script/sqlx-prepare`
+  installs it into the ignored `.state/tools/` on first use and leaves any
+  other installed release alone.
 
 ### Commands
 
-| Command             | What it does                                                                                    |
-| ------------------- | ----------------------------------------------------------------------------------------------- |
-| `script/db-up`      | Starts the local Supabase Postgres alone (port 54330, database `postgres`) and prints the URLs  |
-| `script/db-migrate` | Applies the migrations in `supabase/migrations/` that the local database does not have yet      |
-| `script/db-reset`   | Recreates the local database and applies every migration from zero                              |
-| `script/api-dev`    | Runs the API against the local database as `devtab_api`                                         |
-| `script/api-check`  | `cargo fmt --check`, clippy with `-D warnings`, the tests (with the database), `cargo deny`     |
-| `script/check-all`  | `pnpm check`, then `script/api-check`: what CI checks, before a commit to `api/` or `supabase/` |
+| Command                       | What it does                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- |
+| `script/db-up`                | Starts the local Supabase Postgres alone (port 54330, database `postgres`) and prints the URLs  |
+| `script/db-migrate`           | Applies the migrations in `supabase/migrations/` that the local database does not have yet      |
+| `script/db-reset`             | Recreates the local database and applies every migration from zero                              |
+| `script/api-dev`              | Runs the API against the local database as `devtab_api`, signing with a local test key          |
+| `script/sqlx-prepare`         | Writes the queries' offline data, `.sqlx/`, from the local database (`--check` compares)        |
+| `script/contract-sync <path>` | Copies the extension's side of the contract into `contract/licence-v1/` (`--check` compares)    |
+| `pnpm test:contract`          | The contract test on the extension's side: the backend's tokens through the copied check        |
+| `script/api-check`            | fmt, clippy with `-D warnings`, the tests (with the database), the `.sqlx/` check, `cargo deny` |
+| `script/check-all`            | `pnpm check`, `pnpm test:contract`, then `script/api-check`: what CI checks, before a commit    |
 
 ```bash
 script/db-up
@@ -205,9 +279,11 @@ anew.
 
 `DEVTAB_PUBLIC_ADDR`, `DEVTAB_INTERNAL_ADDR` move the listeners (for example
 when 8080 or 8081 is taken); `devtab-api healthcheck` reads the same
-`DEVTAB_PUBLIC_ADDR`. The database tests (`api/tests/db.rs`) run when
-`DEVTAB_TEST_DATABASE_URL` names a database with the migrations applied;
-`script/api-check` points it at the local one, plain `cargo test` skips them.
+`DEVTAB_PUBLIC_ADDR`. The database tests (`api/tests/db.rs`, `v1.rs`,
+`admin.rs`, `jobs.rs`) run when `DEVTAB_TEST_DATABASE_URL` names a database
+with the migrations applied; `script/api-check` points it at the local one,
+plain `cargo test` skips them with a note. They act as the API role and
+remove what they create.
 
 Stop the stack with `supabase stop`; its data stays in Docker volumes
 (`supabase stop --no-backup` deletes them). The local stack uses ports
@@ -230,26 +306,84 @@ least two weeks before they are locked, transitive ones included: after
 `cargo update`, check the new versions' dates and step back a patch where
 needed (`cargo update -p <crate> --precise <version>`).
 
+### Administration
+
+`devtab-api admin …` on the server (in development: `cargo run -p devtab-api --
+admin …` with `DEVTAB_DATABASE_URL` set, or the built binary). Every change is
+recorded in `app.admin_audit` with the machine's user name, in the same
+transaction; keys are printed once and never stored.
+
+| Command                                                                        | What it does                                                                                                           |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `licence comp --plan <id> [--user <e-mail>] [--until <date>] [--note "…"]`     | Issues a licence free of charge (to an account or to nobody); prints its key                                           |
+| `licence show <lid \| e-mail>`                                                 | A licence, or an account's licences: installations, recent admin actions                                               |
+| `licence block <lid> --reason "…"`                                             | Blocks the key; installations get `revoked: key-blocked` at their next check                                           |
+| `licence revoke <lid> --refund`                                                | Records a refund the provider did not report: `revoked: refund`                                                        |
+| `licence rotate-key <lid>`                                                     | A new key, printed once; installations activated with the old one keep working                                         |
+| `user block <e-mail>`, `user unblock <e-mail>`                                 | `app.users.status`; licences are not touched                                                                           |
+| `installation release <id>`                                                    | Frees a seat; that installation's next check gets `revoked: deactivated`                                               |
+| `plans sync [--file config/plans.toml] [--yes]`                                | Creates or updates the plans' rows (not texts or prices yet); asks first                                               |
+| `keys generate --kid <p1, p2, …> --out <file>`, `keys generate --test --out …` | An ES256 key pair: the private key into a new file, the public entry printed (`--list-out <file>`: also as a key list) |
+| `keys check`                                                                   | The server's key against the trusted keys, as `serve` checks it                                                        |
+
+`serve --emergency-key` signs with a key whose `sign_from` has not come yet,
+for the day the signing key leaks and the waiting key takes over; it is
+logged and recorded in `app.admin_audit`.
+
+### Queries and `.sqlx/`
+
+Queries are `sqlx::query!`, checked against the schema when they compile.
+Builds use the committed offline data in `.sqlx/` (`SQLX_OFFLINE=true` in
+`script/api-check`, CI and later the image); with a database at hand,
+`DATABASE_URL` makes the macros ask it instead. After changing a query or a
+migration: `script/db-migrate`, then `script/sqlx-prepare`, and commit
+`.sqlx/` with the change. `script/api-check` and CI fail when `.sqlx/` is out
+of date.
+
 ### Migrations
 
 `supabase/migrations/<timestamp>_<name>.sql`, applied in order by the
 Supabase CLI and recorded in the database; `supabase migration new <name>`
 creates the next file. They only go forward: an applied migration is never
 edited or deleted. Every object a migration creates in `app` gets row level
-security, and nothing in `app` is granted to the Data API's roles.
+security, and nothing in `app` is granted to the Data API's roles. So far:
+the schema and the API role; `app.users` with its trigger on `auth.users` and
+the two lookups by e-mail address; `app.plans`; licences, installations,
+customers, the job queue and the admin record.
 
 ### Configuration
 
-| Variable                    | Default                                              | Note                             |
-| --------------------------- | ---------------------------------------------------- | -------------------------------- |
-| `DEVTAB_ENV`                | `dev`                                                | `dev`, `staging` or `prod`       |
-| `DEVTAB_PUBLIC_ADDR`        | `0.0.0.0:8080`                                       |                                  |
-| `DEVTAB_INTERNAL_ADDR`      | `127.0.0.1:8081` in `dev`, `0.0.0.0:8081` otherwise  |                                  |
-| `DEVTAB_DATABASE_URL`       | none: required (`script/api-dev` sets the local one) | `postgres://` or `postgresql://` |
-| `DEVTAB_DB_MAX_CONNECTIONS` | `10`                                                 | greater than 0                   |
-| `DEVTAB_LOG`                | `info`                                               | `tracing` directives             |
+| Variable                                  | Default                                              | Note                                                          |
+| ----------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
+| `DEVTAB_ENV`                              | `dev`                                                | `dev`, `staging` or `prod`                                    |
+| `DEVTAB_PUBLIC_ADDR`                      | `0.0.0.0:8080`                                       |                                                               |
+| `DEVTAB_INTERNAL_ADDR`                    | `127.0.0.1:8081` in `dev`, `0.0.0.0:8081` otherwise  |                                                               |
+| `DEVTAB_DATABASE_URL`                     | none: required (`script/api-dev` sets the local one) | `postgres://` or `postgresql://`                              |
+| `DEVTAB_DB_MAX_CONNECTIONS`               | `10`                                                 | greater than 0                                                |
+| `DEVTAB_LOG`                              | `info`                                               | `tracing` directives                                          |
+| `DEVTAB_SIGNING_KEY_FILE`                 | none: `serve` needs it (`script/api-dev`: test key)  | the private key, PKCS#8 PEM                                   |
+| `DEVTAB_SIGNING_KID`                      | none: `serve` needs it (`script/api-dev`: test key)  | its id among the trusted keys                                 |
+| `DEVTAB_DEV_SIGNING_KEYS_FILE`            | none (`script/api-dev`: `.state/signing/`)           | `dev` only: a developer's test public keys; refused otherwise |
+| `DEVTAB_LICENCE_HOST`                     | none: any host in `dev`; required otherwise          | `/v1/*` answers 404 on any other `Host`                       |
+| `DEVTAB_EXTENSION_ORIGINS`                | none in `dev`; required otherwise                    | `chrome-extension://<id>`, comma-separated: CORS of `/v1/*`   |
+| `DEVTAB_MAINTENANCE_UNTIL`                | none                                                 | RFC 3339; until then `/v1/*` answers 503 with `Retry-After`   |
+| `DEVTAB_TOKEN_CHECK_DAYS`                 | `7`                                                  | `chk`                                                         |
+| `DEVTAB_TOKEN_WINDOW_DAYS`                | `30`                                                 | `exp`                                                         |
+| `DEVTAB_TOKEN_WARN_DAYS`                  | `7`                                                  | `warn` before `exp`                                           |
+| `DEVTAB_TOKEN_DUNNING_DAYS`               | `14`                                                 | a subscription's grace after its paid period                  |
+| `DEVTAB_RELEASE_AFTER_DAYS`               | `60`                                                 | an installation not seen for this long loses its seat         |
+| `DEVTAB_ACTIVATION_CHURN`                 | `3`                                                  | new activations in 30 days, per seat                          |
+| `DEVTAB_RATE_ACTIVATE_PER_IP`             | `30`                                                 | requests an hour, by client address                           |
+| `DEVTAB_RATE_ACTIVATE_PER_KEY`            | `10`                                                 | requests an hour, by key                                      |
+| `DEVTAB_RATE_REFRESH_PER_IP`              | `60`                                                 | requests an hour, by client address                           |
+| `DEVTAB_RATE_REFRESH_PER_INSTALLATION`    | `6`                                                  | requests an hour, by licence and installation                 |
+| `DEVTAB_RATE_DEACTIVATE_PER_INSTALLATION` | `10`                                                 | requests an hour, by licence and installation                 |
 
-Logs are compact lines in `dev` and JSON lines in `staging` and `prod`.
+Logs are compact lines in `dev` and JSON lines in `staging` and `prod`. They
+carry a licence id and the first four characters of an installation id;
+never a key, a secret, a token, an e-mail address or a client address. The
+client address (the last `X-Forwarded-For` entry, else the peer) lives only
+in the rate limiters' memory.
 
 ### Layout
 
@@ -257,15 +391,23 @@ Logs are compact lines in `dev` and JSON lines in `staging` and `prod`.
 Cargo.toml, Cargo.lock    the Rust workspace, its lints and the release profile
 rust-toolchain.toml       the pinned Rust toolchain
 clippy.toml, deny.toml    clippy thresholds; licences, advisories and sources of dependencies
-api/src/main.rs           the binary: serve, healthcheck, version
+api/src/main.rs           the binary: serve, admin, healthcheck, version
 api/src/config.rs         DEVTAB_* configuration, every problem reported at once
-api/src/http/             routers, middleware, the error shape, the JSON extractor, health checks
-api/src/store/            the Postgres pool
-api/tests/                HTTP tests without a network; database tests
+api/src/clock.rs          the time decisions depend on, movable in tests
+api/src/http/             routers, middleware, the error shape, /v1/*, CORS, rate limits, health checks
+api/src/licence/          keys, secrets, the token and its signing, activation, refresh, seats
+api/src/store/            the Postgres pool and the queries, a module for each of the tables
+api/src/jobs/             the scheduler and its task under an advisory lock
+api/src/admin.rs          the admin commands
+api/tests/                HTTP, database, /v1/*, admin, scheduler, start-up and contract tests
+.sqlx/                    the queries' offline data (script/sqlx-prepare)
+config/                   signing-keys.json (published public keys), plans.toml
+contract/licence-v1/      the licence contract: schemas, errors, vectors, the copied verifier, its test
 supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
 supabase/migrations/      SQL migrations, forward only
-script/                   db-up, db-migrate, db-reset, api-dev, api-check, check-all; lib/supabase.sh
-.github/workflows/ci.yml  CI: secret scan, the site, the API
+script/                   db-up, db-migrate, db-reset, api-dev, api-check, check-all, sqlx-prepare,
+                          contract-sync; lib/supabase.sh
+.github/workflows/ci.yml  CI: secret scan, the site and the contract test, the API
 ```
 
 ## Licence
