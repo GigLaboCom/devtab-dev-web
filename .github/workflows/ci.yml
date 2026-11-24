@@ -53,8 +53,9 @@ jobs:
         run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      # The licence contract with the extension: the backend's test tokens
-      # through the copied reference check, the copies against their checksums.
+      # The licence and plans contracts with the extension: the backend's test
+      # tokens and catalogues through the copied reference check and catalogue
+      # reader, the copies against their checksums.
       - run: pnpm test:contract
 
   api:
@@ -110,3 +111,14 @@ jobs:
       - name: Release build
         run: cargo build --locked --release -p devtab-api
       - run: cargo deny check
+      # The generated files (contract/internal-openapi.json, src/lib/api/schema.gen.ts)
+      # are what the code gives: script/gen needs the API and openapi-typescript.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Enable corepack (pnpm from packageManager)
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: The generated files are current
+        run: script/gen --check
