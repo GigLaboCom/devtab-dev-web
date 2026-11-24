@@ -9,3 +9,5 @@ contract/
 config/
 .sqlx/
 Cargo.lock
+# Written by script/gen from the API's code.
+src/lib/api/schema.gen.ts

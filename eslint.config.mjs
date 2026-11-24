@@ -7,7 +7,19 @@ import tseslint from 'typescript-eslint';
 
 export default defineConfig(
   {
-    ignores: ['dist/', '.astro/', 'node_modules/', 'target/', 'api/', 'supabase/', 'contract/', 'config/', '.sqlx/'],
+    ignores: [
+      'dist/',
+      '.astro/',
+      'node_modules/',
+      'target/',
+      'api/',
+      'supabase/',
+      'contract/',
+      'config/',
+      '.sqlx/',
+      // Written by script/gen from the API's code.
+      'src/lib/api/schema.gen.ts',
+    ],
   },
   js.configs.recommended,
   tseslint.configs.recommended,

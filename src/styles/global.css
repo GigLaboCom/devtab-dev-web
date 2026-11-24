@@ -3,7 +3,8 @@
 
 /* Tailwind reads class names from every file git does not ignore; the backend's files have none. */
 @source not '../../{api,supabase,contract,config,.sqlx,.github}';
-@source not '../../script/{api-*,db-*,check-all,contract-sync,sqlx-prepare,lib}';
+@source not '../../script/{api-*,db-*,check-all,contract-sync,gen,sqlx-prepare,lib}';
+@source not '../lib/api/schema.gen.ts';
 @source not '../../{Cargo.toml,Cargo.lock,rust-toolchain.toml,clippy.toml,deny.toml}';
 
 /* Tailwind utilities read the tokens at run time (`bg-background` → var(--background)). */
