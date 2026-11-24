@@ -1,8 +1,9 @@
 //! `devtab-api serve` refuses to start with a signing key it may not sign
 //! with, before it opens a listener or touches the database: a private key
 //! that is not the trusted key of its id, an id nobody trusts, no key at all,
-//! a test key outside `dev`, and a developer's key list outside `dev`. The
-//! keys are made for each test in a temporary folder.
+//! a test key outside `dev`, and a developer's key list outside `dev`; nor
+//! does it start with the fake payment provider in `prod`. The keys are made
+//! for each test in a temporary folder.
 #![allow(clippy::unwrap_used)]
 
 mod support;
@@ -76,6 +77,7 @@ const ORIGINS: (&str, &str) = (
     "DEVTAB_EXTENSION_ORIGINS",
     "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
 );
+const SITE: (&str, &str) = ("DEVTAB_SITE_URL", "https://web.example.invalid");
 
 #[test]
 fn a_private_key_that_is_not_the_trusted_one_stops_the_start() {
@@ -130,9 +132,25 @@ fn a_test_key_stops_the_start_in_staging_and_prod() {
             ("DEVTAB_SIGNING_KID", &keys.kid),
             HOST,
             ORIGINS,
+            SITE,
         ]);
         refused(&output, "is a test key");
     }
+}
+
+#[test]
+fn the_fake_payment_provider_stops_the_start_in_prod() {
+    let keys = Keys::new();
+    let output = serve(&[
+        ("DEVTAB_ENV", "prod"),
+        ("DEVTAB_SIGNING_KEY_FILE", &keys.pem),
+        ("DEVTAB_SIGNING_KID", &keys.kid),
+        HOST,
+        ORIGINS,
+        SITE,
+        ("DEVTAB_PAYMENTS", "fake"),
+    ]);
+    refused(&output, "DEVTAB_PAYMENTS=fake is refused in prod");
 }
 
 #[test]

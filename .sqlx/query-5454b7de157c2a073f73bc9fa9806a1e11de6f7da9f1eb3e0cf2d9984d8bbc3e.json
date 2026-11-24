@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into app.settings (key, value) values ($1, $2)\n         on conflict (key) do update set value = excluded.value",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5454b7de157c2a073f73bc9fa9806a1e11de6f7da9f1eb3e0cf2d9984d8bbc3e"
+}

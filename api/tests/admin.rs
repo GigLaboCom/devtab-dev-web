@@ -431,7 +431,7 @@ async fn users_are_blocked_and_unblocked_and_installations_released() {
 }
 
 #[tokio::test]
-async fn plans_sync_shows_the_changes_asks_and_writes_only_the_plans_rows() {
+async fn plans_sync_shows_the_changes_asks_and_records_each_applied_sync() {
     let Some(mut conn) = support::connect().await else {
         return;
     };
@@ -442,15 +442,17 @@ async fn plans_sync_shows_the_changes_asks_and_writes_only_the_plans_rows() {
     let path = file.to_str().unwrap().to_owned();
     std::fs::write(
         &file,
-        "[[plan]]\nid = \"test-sync-free\"\nkind = \"free\"\nsort = 1\n\n\
-         [[plan]]\nid = \"test-sync-month\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 3\nsort = 2\n",
+        "[[plan]]\nid = \"test-sync-free\"\nkind = \"free\"\nsort = 1\n[plan.texts.en]\nname = \"Free\"\n\n\
+         [[plan]]\nid = \"test-sync-month\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 3\nsort = 2\n\
+         [plan.texts.en]\nname = \"Monthly\"\n",
     )
     .unwrap();
 
     let declined = run_with(&mut tx, &["plans", "sync", "--file", &path], false)
         .await
         .unwrap();
-    assert!(declined.contains("+ test-sync-free"));
+    assert!(declined.contains("+ plan test-sync-free"), "{declined}");
+    assert!(declined.contains("+ texts test-sync-free/en"), "{declined}");
     assert!(declined.contains("nothing changed"));
     assert!(
         devtab_api::store::plans::find(&mut *tx, "test-sync-free")
@@ -462,7 +464,10 @@ async fn plans_sync_shows_the_changes_asks_and_writes_only_the_plans_rows() {
     let applied = run_with(&mut tx, &["plans", "sync", "--file", &path, "--yes"], false)
         .await
         .unwrap();
-    assert!(applied.contains("2 plan(s) written"), "{applied}");
+    assert!(
+        applied.contains("written: 2 plan(s), 2 text(s), 0 price(s)"),
+        "{applied}"
+    );
     let month = devtab_api::store::plans::find(&mut *tx, "test-sync-month")
         .await
         .unwrap()
@@ -473,16 +478,17 @@ async fn plans_sync_shows_the_changes_asks_and_writes_only_the_plans_rows() {
     );
 
     let again = run(&mut tx, &["plans", "sync", "--file", &path]).await;
-    assert!(again.contains("plans are up to date"));
+    assert!(again.contains("the catalogue is up to date"), "{again}");
 
     std::fs::write(
         &file,
-        "[[plan]]\nid = \"test-sync-month\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 5\nsort = 2\n",
+        "[[plan]]\nid = \"test-sync-month\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 5\nsort = 2\n\
+         [plan.texts.en]\nname = \"Monthly\"\n",
     )
     .unwrap();
     let changed = run(&mut tx, &["plans", "sync", "--file", &path]).await;
-    assert!(changed.contains("~ test-sync-month"));
-    assert!(changed.contains("test-sync-free  not in the file: left as it is"));
+    assert!(changed.contains("~ plan test-sync-month"), "{changed}");
+    assert!(changed.contains("plan test-sync-free  not in the file: left as it is"));
     let month = devtab_api::store::plans::find(&mut *tx, "test-sync-month")
         .await
         .unwrap()

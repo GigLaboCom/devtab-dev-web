@@ -1,7 +1,8 @@
 //! A validator for the JSON Schema keywords the contract's schemas use
 //! (draft 2020-12): `type`, `const`, `enum`, `properties`, `required`,
 //! `additionalProperties`, `pattern`, `minLength`, `maxLength`, `minimum`,
-//! `maximum`, `allOf`, `anyOf`, `not`, `if`/`then`/`else`, plus the
+//! `maximum`, `items`, `minItems`, `maxItems`, `allOf`, `anyOf`, `not`,
+//! `if`/`then`/`else`, plus the
 //! annotations `$schema`, `title`, `description`. Any other keyword fails the
 //! check, so a schema can never rely on a rule that is silently skipped.
 
@@ -10,7 +11,7 @@ use serde_json::{Map, Value};
 use super::repo;
 
 const ANNOTATIONS: [&str; 3] = ["$schema", "title", "description"];
-const KEYWORDS: [&str; 16] = [
+const KEYWORDS: [&str; 19] = [
     "type",
     "const",
     "enum",
@@ -22,6 +23,9 @@ const KEYWORDS: [&str; 16] = [
     "maxLength",
     "minimum",
     "maximum",
+    "items",
+    "minItems",
+    "maxItems",
     "allOf",
     "anyOf",
     "not",
@@ -29,9 +33,15 @@ const KEYWORDS: [&str; 16] = [
     "then",
 ];
 
-/// A schema of `contract/licence-v1/`.
+/// A schema of `contract/licence-v1/`, or of another folder of `contract/`
+/// when `name` names it (`plans-v1/plans.response.schema.json`).
 pub fn load(name: &str) -> Value {
-    let text = std::fs::read_to_string(repo("contract/licence-v1").join(name)).unwrap();
+    let path = if name.contains('/') {
+        repo("contract").join(name)
+    } else {
+        repo("contract/licence-v1").join(name)
+    };
+    let text = std::fs::read_to_string(path).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
@@ -144,6 +154,24 @@ fn check(schema: &Value, value: &Value, at: &str, found: &mut Vec<String>) {
                     found.push(format!("{at}: {name} is not allowed"));
                 }
                 None => {}
+            }
+        }
+    }
+    if let Some(list) = value.as_array() {
+        let length = u64::try_from(list.len()).unwrap_or(u64::MAX);
+        if let Some(min) = rules.get("minItems").and_then(Value::as_u64)
+            && length < min
+        {
+            found.push(format!("{at}: fewer than {min} items"));
+        }
+        if let Some(max) = rules.get("maxItems").and_then(Value::as_u64)
+            && length > max
+        {
+            found.push(format!("{at}: more than {max} items"));
+        }
+        if let Some(rule) = rules.get("items") {
+            for (i, item) in list.iter().enumerate() {
+                check(rule, item, &format!("{at}[{i}]"), found);
             }
         }
     }

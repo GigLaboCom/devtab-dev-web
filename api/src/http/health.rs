@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::error::AppError;
 use crate::state::AppState;
 
-/// `GET /api/healthz`, `GET /internal/healthz`: the process is up.
+/// `GET /api/healthz`: the process is up (`/internal/healthz`: `internal.rs`).
 pub async fn healthz() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }

@@ -1,15 +1,32 @@
-# The plans `devtab-api admin plans sync` creates or updates in app.plans.
+# The plans' catalogue: `devtab-api admin plans sync` makes the database's
+# app.plans, app.plan_texts and app.plan_prices what this file says for the
+# plans it lists (README.md, "Plans").
 #
-# Only the plans' rows so far: their texts and prices are not part of this
-# file yet. An id never changes once synced; licences and the extension's
-# plan cards refer to it. `seats` is how many installations a licence of the
-# plan may have active. Nothing is sold yet, so no plan is available.
+# - An id never changes once synced: licences and the extension's plan cards
+#   refer to it. `seats` is how many installations a licence of the plan may
+#   have active; `sort` is the order of the cards.
+# - Texts: English is required and the only language GET /v1/plans sends.
+#   Lengths in characters (Unicode code points, after trimming): name 1–32,
+#   summary 140, includes 0–8 lines of 1–100, price_note 60, badge 24; no
+#   control or text-direction characters.
+# - Prices: the provider and its price id. A real provider states the amount
+#   and currency itself, and the sync reads them from it; only the fake
+#   provider's prices are written here, in XTS, the code ISO 4217 reserves for
+#   tests, which only development serves.
+#
+# The texts are the placeholders of the extension's specification of the
+# plans; the final wording and the prices are not decided. Nothing is sold
+# yet, so no plan is available, and GET /v1/plans answers an empty list.
 
 [[plan]]
 id = "free"
 kind = "free"
 sort = 1
 available = false
+[plan.texts.en]
+name = "Free"
+summary = "Every tool, in full, offline."
+includes = ["All 44 tools", "Nothing you paste leaves this browser"]
 
 [[plan]]
 id = "pro-monthly"
@@ -18,6 +35,16 @@ interval = "month"
 seats = 3
 sort = 2
 available = false
+[plan.texts.en]
+name = "Monthly"
+summary = "Pro, billed every month."
+includes = ["Tool history and its archive", "Tools remember your options", "Copy automatically after generating"]
+price_note = "Tax calculated at checkout."
+[[plan.prices]]
+provider = "fake"
+provider_price_id = "pri_TEST_0001"
+currency = "XTS"
+amount_minor = 1111
 
 [[plan]]
 id = "pro-annual"
@@ -26,3 +53,14 @@ interval = "year"
 seats = 3
 sort = 3
 available = false
+[plan.texts.en]
+name = "Annually"
+summary = "Pro, billed once a year."
+includes = ["Everything in Monthly"]
+price_note = "Tax calculated at checkout."
+badge = "Save with a year"
+[[plan.prices]]
+provider = "fake"
+provider_price_id = "pri_TEST_0002"
+currency = "XTS"
+amount_minor = 11110

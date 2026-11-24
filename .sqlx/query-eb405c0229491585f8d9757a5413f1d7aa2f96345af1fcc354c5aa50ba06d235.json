@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "delete from app.plan_texts where plan_id = $1 and locale = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb405c0229491585f8d9757a5413f1d7aa2f96345af1fcc354c5aa50ba06d235"
+}

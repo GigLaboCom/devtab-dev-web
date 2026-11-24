@@ -182,13 +182,16 @@ async fn set_updated_at_exists_and_only_the_api_role_may_run_it() {
 }
 
 /// Every table the migrations create in `app`.
-const TABLES: [&str; 7] = [
+const TABLES: [&str; 10] = [
     "admin_audit",
     "customers",
     "installations",
     "jobs",
     "licences",
+    "plan_prices",
+    "plan_texts",
     "plans",
+    "settings",
     "users",
 ];
 

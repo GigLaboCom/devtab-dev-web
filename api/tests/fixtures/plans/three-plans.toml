@@ -1,0 +1,52 @@
+# A test catalogue: the three plans of config/plans.toml, all available, with
+# the same placeholder texts and the fake provider's prices in XTS, the code
+# ISO 4217 reserves for tests. tests/plans.rs builds the answers of
+# contract/plans-v1/server-catalogs.json from it and syncs it into a
+# transaction that is rolled back. Never a real price.
+
+[[plan]]
+id = "free"
+kind = "free"
+sort = 1
+available = true
+[plan.texts.en]
+name = "Free"
+summary = "Every tool, in full, offline."
+includes = ["All 44 tools", "Nothing you paste leaves this browser"]
+
+[[plan]]
+id = "pro-monthly"
+kind = "subscription"
+interval = "month"
+seats = 3
+sort = 2
+available = true
+[plan.texts.en]
+name = "Monthly"
+summary = "Pro, billed every month."
+includes = ["Tool history and its archive", "Tools remember your options", "Copy automatically after generating"]
+price_note = "Tax calculated at checkout."
+[[plan.prices]]
+provider = "fake"
+provider_price_id = "pri_TEST_0001"
+currency = "XTS"
+amount_minor = 1111
+
+[[plan]]
+id = "pro-annual"
+kind = "subscription"
+interval = "year"
+seats = 3
+sort = 3
+available = true
+[plan.texts.en]
+name = "Annually"
+summary = "Pro, billed once a year."
+includes = ["Everything in Monthly"]
+price_note = "Tax calculated at checkout."
+badge = "Save with a year"
+[[plan.prices]]
+provider = "fake"
+provider_price_id = "pri_TEST_0002"
+currency = "XTS"
+amount_minor = 11110

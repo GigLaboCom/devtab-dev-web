@@ -4,14 +4,12 @@
 //!
 //! Licence keys are printed once, when made; only their hashes are stored.
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
 use clap::Subcommand;
-use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
@@ -21,8 +19,9 @@ use crate::clock::{parse_rfc3339, rfc3339};
 use crate::config::Env;
 use crate::licence::key;
 use crate::licence::signer::{self, KeyList, Signer};
+use crate::plans::catalogue::CatalogueSettings;
+use crate::plans::{file as plans_file, sync as plans_sync};
 use crate::store::licences::{LicenceRow, NewLicence};
-use crate::store::plans::PlanRow;
 use crate::store::{audit, installations, licences, plans, users};
 
 #[derive(Debug, Subcommand)]
@@ -107,8 +106,10 @@ pub enum InstallationCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum PlansCommand {
-    /// Create or update the plans of the file (their rows only: texts and
-    /// prices are not handled yet). Prints the changes and asks first.
+    /// Make the catalogue what the file says for the plans it lists: their
+    /// rows, their cards' texts, and their prices read from the provider by
+    /// price id (the fake provider's from the file). Prints the changes and
+    /// asks first; writes a new catalogue version.
     Sync {
         #[arg(long, default_value = "config/plans.toml")]
         file: PathBuf,
@@ -180,9 +181,19 @@ pub async fn execute(
             release(*id, conn, ctx).await
         }
         AdminCommand::Plans(PlansCommand::Sync { file, yes }) => {
-            let wanted = read_plans(file)?;
+            let wanted = plans_file::read(file)?;
             let mut ask = || *yes || confirm();
-            plans_sync(&wanted, conn, ctx, &mut ask).await
+            // No real provider's adapter exists yet: only the fake provider's
+            // prices, which the file states, can be read.
+            plans_sync::sync(
+                &wanted,
+                &[],
+                &CatalogueSettings::default(),
+                conn,
+                ctx,
+                &mut ask,
+            )
+            .await
         }
         AdminCommand::Keys(_) => bail!("the keys commands do not use the database"),
     }
@@ -526,174 +537,6 @@ async fn release(id: Uuid, conn: &mut PgConnection, ctx: &mut Context<'_>) -> an
     Ok(())
 }
 
-/// `config/plans.toml`: the plans' rows. Texts and prices are not part of
-/// the file yet; an unknown field is an error.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PlansFile {
-    #[serde(default)]
-    plan: Vec<PlanSpec>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PlanSpec {
-    id: String,
-    kind: String,
-    interval: Option<String>,
-    seats: Option<i32>,
-    sort: i16,
-    #[serde(default)]
-    available: bool,
-    until: Option<String>,
-}
-
-/// More available plans than the extension's cards show make the whole
-/// catalogue unusable to it.
-const MAX_AVAILABLE_PLANS: usize = 6;
-
-fn is_plan_id(id: &str) -> bool {
-    (1..=32).contains(&id.len())
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-/// Reads and checks a plans file.
-pub fn read_plans(path: &Path) -> anyhow::Result<Vec<PlanRow>> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    parse_plans(&text).with_context(|| path.display().to_string())
-}
-
-pub fn parse_plans(text: &str) -> anyhow::Result<Vec<PlanRow>> {
-    let file: PlansFile = toml::from_str(text).context("not a plans file")?;
-    let mut ids = BTreeSet::new();
-    let mut rows = Vec::new();
-    for spec in file.plan {
-        let id = spec.id;
-        ensure!(is_plan_id(&id), "plan id `{id}` breaks [a-z0-9-]{{1,32}}");
-        ensure!(ids.insert(id.clone()), "plan `{id}` appears twice");
-        ensure!(
-            matches!(spec.kind.as_str(), "free" | "subscription" | "one_time"),
-            "plan `{id}`: kind is free, subscription or one_time"
-        );
-        ensure!(
-            (spec.kind == "subscription") == spec.interval.is_some(),
-            "plan `{id}`: a subscription, and only a subscription, has an interval"
-        );
-        if let Some(interval) = &spec.interval {
-            ensure!(
-                matches!(interval.as_str(), "month" | "year"),
-                "plan `{id}`: interval is month or year"
-            );
-        }
-        match spec.seats {
-            Some(seats) => ensure!(
-                (1..=100).contains(&seats),
-                "plan `{id}`: seats are 1 to 100"
-            ),
-            None => ensure!(
-                spec.kind == "free",
-                "plan `{id}`: only a free plan has no seats"
-            ),
-        }
-        let until = spec
-            .until
-            .as_deref()
-            .map(parse_rfc3339)
-            .transpose()
-            .with_context(|| format!("plan `{id}`: until is an RFC 3339 time"))?;
-        rows.push(PlanRow {
-            id,
-            kind: spec.kind,
-            interval: spec.interval,
-            seats: spec.seats,
-            sort: spec.sort,
-            available: spec.available,
-            until,
-        });
-    }
-    let available = rows.iter().filter(|p| p.available).count();
-    ensure!(
-        available <= MAX_AVAILABLE_PLANS,
-        "{available} plans are available; the extension shows at most {MAX_AVAILABLE_PLANS}"
-    );
-    Ok(rows)
-}
-
-fn describe(plan: &PlanRow) -> String {
-    format!(
-        "kind={} interval={} seats={} sort={} available={} until={}",
-        plan.kind,
-        plan.interval.as_deref().unwrap_or("-"),
-        plan.seats.map_or("-".to_owned(), |s| s.to_string()),
-        plan.sort,
-        plan.available,
-        when(plan.until),
-    )
-}
-
-/// Creates or updates `wanted` after printing the changes and asking.
-/// Plans that are in the database but not in the file stay as they are.
-pub async fn plans_sync(
-    wanted: &[PlanRow],
-    conn: &mut PgConnection,
-    ctx: &mut Context<'_>,
-    confirm: &mut dyn FnMut() -> bool,
-) -> anyhow::Result<()> {
-    let current = plans::all(&mut *conn).await?;
-    let mut changed = Vec::new();
-    for plan in wanted {
-        match current.iter().find(|p| p.id == plan.id) {
-            None => {
-                writeln!(ctx.out, "+ {}  {}", plan.id, describe(plan))?;
-                changed.push(plan);
-            }
-            Some(old) if old != plan => {
-                writeln!(ctx.out, "~ {}  {}", plan.id, describe(old))?;
-                writeln!(
-                    ctx.out,
-                    "  {}  {}",
-                    " ".repeat(plan.id.len()),
-                    describe(plan)
-                )?;
-                changed.push(plan);
-            }
-            Some(_) => {}
-        }
-    }
-    for old in current
-        .iter()
-        .filter(|p| wanted.iter().all(|w| w.id != p.id))
-    {
-        writeln!(ctx.out, "  {}  not in the file: left as it is", old.id)?;
-    }
-    if changed.is_empty() {
-        writeln!(ctx.out, "plans are up to date")?;
-        return Ok(());
-    }
-    if !confirm() {
-        writeln!(ctx.out, "nothing changed")?;
-        return Ok(());
-    }
-    for plan in &changed {
-        plans::upsert(&mut *conn, plan).await?;
-    }
-    let ids: Vec<&str> = changed.iter().map(|p| p.id.as_str()).collect();
-    audit::record(
-        &mut *conn,
-        &ctx.actor,
-        "plans.sync",
-        None,
-        &json!({ "plans": ids }),
-        ctx.now,
-    )
-    .await?;
-    writeln!(ctx.out, "{} plan(s) written", changed.len())?;
-    Ok(())
-}
-
 /// `keys generate`: writes the private key into a new file (mode 600) and
 /// prints the public entry for config/signing-keys.json.
 pub fn keys_generate(
@@ -785,39 +628,6 @@ pub fn keys_check(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_repository_plans_file_parses() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/plans.toml");
-        let plans = read_plans(&path).unwrap();
-        let ids: Vec<&str> = plans.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["free", "pro-monthly", "pro-annual"]);
-        assert!(plans.iter().all(|p| !p.available), "nothing is sold yet");
-    }
-
-    #[test]
-    fn plans_file_rules() {
-        let ok = "[[plan]]\nid = \"pro-monthly\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 3\nsort = 1\n";
-        assert_eq!(parse_plans(ok).unwrap().len(), 1);
-        for broken in [
-            "[[plan]]\nid = \"Pro\"\nkind = \"free\"\nsort = 1\n",
-            "[[plan]]\nid = \"a\"\nkind = \"subscription\"\nseats = 3\nsort = 1\n",
-            "[[plan]]\nid = \"a\"\nkind = \"one_time\"\nsort = 1\n",
-            "[[plan]]\nid = \"a\"\nkind = \"free\"\nsort = 1\nprice = 5\n",
-            "[[plan]]\nid = \"a\"\nkind = \"free\"\nsort = 1\nuntil = \"soon\"\n",
-            "[[plan]]\nid = \"a\"\nkind = \"free\"\nsort = 1\n[[plan]]\nid = \"a\"\nkind = \"free\"\nsort = 2\n",
-        ] {
-            assert!(parse_plans(broken).is_err(), "{broken}");
-        }
-        let seven = (0..7).fold(String::new(), |mut text, i| {
-            let _ = write!(
-                text,
-                "[[plan]]\nid = \"p{i}\"\nkind = \"free\"\nsort = {i}\navailable = true\n"
-            );
-            text
-        });
-        assert!(parse_plans(&seven).is_err(), "seven available plans");
-    }
 
     #[test]
     fn until_takes_a_date_or_a_time() {

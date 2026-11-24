@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.plan_prices set active = false where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "17cb9148eb889f29af59c725c221525957c4d3a70ac8a89fccbe7784f19ae564"
+}

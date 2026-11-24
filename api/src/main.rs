@@ -1,4 +1,4 @@
-//! `devtab-api` binary: `serve`, `admin`, `healthcheck`, `version`.
+//! `devtab-api` binary: `serve`, `admin`, `openapi`, `healthcheck`, `version`.
 #![forbid(unsafe_code)]
 
 use std::io::{BufRead as _, Write as _};
@@ -48,6 +48,9 @@ enum Command {
         #[command(subcommand)]
         command: AdminCommand,
     },
+    /// Print the internal listener's description, an `OpenAPI` document
+    /// (what `script/gen` writes into contract/internal-openapi.json).
+    Openapi,
     /// Probe `GET /api/readyz` on the local public listener; exit 0 on 200.
     Healthcheck,
     /// Print the version and build SHA.
@@ -65,6 +68,16 @@ fn main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        Command::Openapi => match devtab_api::http::internal::openapi().to_pretty_json() {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Healthcheck => run(healthcheck()),
         Command::Serve { emergency_key } => run(serve(emergency_key)),
         Command::Admin {
@@ -192,6 +205,12 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
     telemetry::init(&config);
 
     let signer = signing_key(&config, emergency_key)?;
+    if !config.env.is_dev() && config.payments.as_deref() == Some(devtab_api::payments::fake::ID) {
+        tracing::warn!(
+            "DEVTAB_PAYMENTS=fake outside dev: its prices use the test currency, which is served only \
+             in dev, so GET /v1/plans offers no paid plan"
+        );
+    }
     let store = Store::connect_lazy(&config.database_url, config.db_max_connections)
         .context("invalid DEVTAB_DATABASE_URL")?;
     if emergency_key {

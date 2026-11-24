@@ -1,5 +1,6 @@
 //! The extension's licence endpoints on the public listener: `POST
 //! /v1/activate`, `/v1/refresh`, `/v1/deactivate` (`contract/licence-v1/`).
+//! `GET /v1/plans` is in `plans.rs`, with the same host check and maintenance.
 //!
 //! Around them, outermost first: the host check (`DEVTAB_LICENCE_HOST`),
 //! CORS, `Cache-Control: no-store`, maintenance (`DEVTAB_MAINTENANCE_UNTIL`),
@@ -134,14 +135,24 @@ async fn deactivate(
 
 /// What the guards around the endpoints read.
 #[derive(Debug, Clone)]
-struct Guard {
+pub(super) struct Guard {
     licence_host: Option<String>,
     maintenance_until: Option<OffsetDateTime>,
     clock: SharedClock,
 }
 
+impl Guard {
+    pub(super) fn new(config: &Config, state: &AppState) -> Self {
+        Self {
+            licence_host: config.licence_host.clone(),
+            maintenance_until: config.maintenance_until,
+            clock: state.clock.clone(),
+        }
+    }
+}
+
 /// `/v1/*` exists only on the licence host, when one is configured.
-async fn licence_host(
+pub(super) async fn licence_host(
     State(guard): State<Guard>,
     request: Request,
     next: Next,
@@ -161,7 +172,7 @@ async fn licence_host(
     Ok(next.run(request).await)
 }
 
-async fn maintenance(
+pub(super) async fn maintenance(
     State(guard): State<Guard>,
     request: Request,
     next: Next,
@@ -189,11 +200,7 @@ async fn no_store(request: Request, next: Next) -> Response {
 
 /// The `/v1/*` routes with their guards.
 pub fn routes(config: &Config, state: AppState) -> Router {
-    let guard = Guard {
-        licence_host: config.licence_host.clone(),
-        maintenance_until: config.maintenance_until,
-        clock: state.clock.clone(),
-    };
+    let guard = Guard::new(config, &state);
     let origins = AllowedOrigins::new(&config.extension_origins);
     let activate_per_ip = state.limits.activate_per_ip.clone();
     let refresh_per_ip = state.limits.refresh_per_ip.clone();

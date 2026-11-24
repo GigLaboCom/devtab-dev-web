@@ -11,6 +11,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::licence::LicenceSettings;
 use crate::licence::token::Spans;
+use crate::payments;
+use crate::plans::catalogue::CatalogueSettings;
 
 /// Deployment environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +48,8 @@ pub struct RateLimits {
     pub refresh_per_ip: NonZeroU32,
     pub refresh_per_installation: NonZeroU32,
     pub deactivate_per_installation: NonZeroU32,
+    /// `GET /v1/plans`: requests a minute, by client address.
+    pub plans_per_ip: NonZeroU32,
 }
 
 impl Default for RateLimits {
@@ -58,6 +62,7 @@ impl Default for RateLimits {
             refresh_per_ip: n(60),
             refresh_per_installation: n(6),
             deactivate_per_installation: n(10),
+            plans_per_ip: n(60),
         }
     }
 }
@@ -87,6 +92,14 @@ pub struct Config {
     pub dev_signing_keys_file: Option<PathBuf>,
     pub licence: LicenceSettings,
     pub rate_limits: RateLimits,
+    /// The site's address, `https://<host>`: the plans' checkout and manage
+    /// addresses.
+    pub site_url: String,
+    /// The payment provider whose prices the plans' endpoints serve
+    /// (`fake` in development); none: no paid plan is offered.
+    pub payments: Option<String>,
+    /// `maxAge` of `GET /v1/plans`, seconds.
+    pub plans_max_age_s: u32,
 }
 
 // The database URL may carry a password, so it stays out of debug output.
@@ -107,6 +120,9 @@ impl fmt::Debug for Config {
             .field("dev_signing_keys_file", &self.dev_signing_keys_file)
             .field("licence", &self.licence)
             .field("rate_limits", &self.rate_limits)
+            .field("site_url", &self.site_url)
+            .field("payments", &self.payments)
+            .field("plans_max_age_s", &self.plans_max_age_s)
             .finish()
     }
 }
@@ -144,9 +160,16 @@ impl Default for Config {
             dev_signing_keys_file: None,
             licence: LicenceSettings::default(),
             rate_limits: RateLimits::default(),
+            site_url: DEV_SITE_URL.to_owned(),
+            payments: Some(payments::fake::ID.to_owned()),
+            plans_max_age_s: 86_400,
         }
     }
 }
+
+/// The site's address in development: the host the extension's development
+/// configuration accepts for checkout and manage addresses.
+pub const DEV_SITE_URL: &str = "https://web.example.invalid";
 
 /// An extension's origin as Chrome sends it: `chrome-extension://` and a
 /// 32-letter id of `a`–`p`.
@@ -164,7 +187,26 @@ fn is_host_name(host: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
 }
 
+/// `https://<host>`, with at most one slash after it, as the site's address;
+/// the host name is lower-cased and the slash dropped.
+fn site_url(text: &str) -> Option<String> {
+    let host = text.strip_prefix("https://")?;
+    let host = host.strip_suffix('/').unwrap_or(host);
+    (is_host_name(host) && host.len() <= 200)
+        .then(|| format!("https://{}", host.to_ascii_lowercase()))
+}
+
 impl Config {
+    /// What the plans' catalogue is built with.
+    pub fn catalogue(&self) -> CatalogueSettings {
+        CatalogueSettings {
+            site_url: self.site_url.clone(),
+            provider: self.payments.clone(),
+            max_age_s: self.plans_max_age_s,
+            test_currencies: self.env.is_dev(),
+        }
+    }
+
     /// Reads the configuration from the process environment.
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|key| std::env::var(key).ok())
@@ -224,6 +266,7 @@ impl Config {
         }
 
         config.read_licence(&get, &mut problems);
+        config.read_plans(&get, &mut problems);
 
         if let Some(filter) = get("DEVTAB_LOG") {
             match EnvFilter::try_new(&filter) {
@@ -241,8 +284,56 @@ impl Config {
         }
     }
 
-    /// The licence endpoints' settings: host, origins, maintenance, the
-    /// signing key, the token's days, seats and rate limits.
+    /// The plans' settings: the site's address, the payment provider and the
+    /// catalogue's `maxAge`.
+    fn read_plans(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        match get("DEVTAB_SITE_URL") {
+            Some(text) => match site_url(&text) {
+                Some(url) => config.site_url = url,
+                None => problems.push(format!(
+                    "DEVTAB_SITE_URL must be https:// and a host name, no port or path, such as \
+                     https://web.example.invalid; got `{text}`"
+                )),
+            },
+            None if !config.env.is_dev() => {
+                problems.push("DEVTAB_SITE_URL is required in staging and prod".to_owned());
+            }
+            None => {}
+        }
+
+        config.payments = match get("DEVTAB_PAYMENTS") {
+            Some(name) if payments::KNOWN.contains(&name.as_str()) => Some(name),
+            Some(name) => {
+                problems.push(format!(
+                    "DEVTAB_PAYMENTS must be one of {}, got `{name}`",
+                    payments::KNOWN.join(", ")
+                ));
+                None
+            }
+            // Development has the fake provider; elsewhere no provider is assumed.
+            None if config.env.is_dev() => Some(payments::fake::ID.to_owned()),
+            None => None,
+        };
+        if config.env == Env::Prod && config.payments.as_deref() == Some(payments::fake::ID) {
+            problems.push(
+                "DEVTAB_PAYMENTS=fake is refused in prod: the fake provider's prices use a test \
+                 currency"
+                    .to_owned(),
+            );
+        }
+
+        if let Some(text) = get("DEVTAB_PLANS_MAX_AGE") {
+            match text.parse::<u32>() {
+                Ok(n) if (3_600..=604_800).contains(&n) => config.plans_max_age_s = n,
+                _ => problems.push(format!(
+                    "DEVTAB_PLANS_MAX_AGE must be seconds from 3600 to 604800 (what the extension \
+                     keeps), got `{text}`"
+                )),
+            }
+        }
+    }
+
     /// The signing key's file and id, and in `dev` the developer's own key list.
     fn read_signing(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
         let config = self;
@@ -263,6 +354,8 @@ impl Config {
         }
     }
 
+    /// The licence endpoints' settings: host, origins, maintenance, the
+    /// signing key, the token's days, seats and rate limits.
     fn read_licence(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
         let config = self;
         match get("DEVTAB_LICENCE_HOST") {
@@ -344,6 +437,7 @@ impl Config {
                 "DEVTAB_RATE_DEACTIVATE_PER_INSTALLATION",
                 defaults.deactivate_per_installation,
             ),
+            plans_per_ip: quota("DEVTAB_RATE_PLANS_PER_IP", defaults.plans_per_ip),
         };
         // An active token needs iat < chk ≤ warn ≤ exp.
         if check_days > window_days || warn_days > window_days - check_days.min(window_days) {
@@ -395,6 +489,7 @@ mod tests {
                 ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
                 ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
                 ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+                ("DEVTAB_SITE_URL", "https://web.example.invalid"),
             ])
             .unwrap();
             assert_eq!(
@@ -419,6 +514,7 @@ mod tests {
             ("DEVTAB_LOG", "devtab_api=debug,info"),
             ("DEVTAB_LICENCE_HOST", "Licence.Example.Invalid"),
             ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+            ("DEVTAB_SITE_URL", "https://Web.Example.Invalid/"),
         ])
         .unwrap();
         assert_eq!(config.env, Env::Prod);
@@ -430,6 +526,8 @@ mod tests {
         );
         assert_eq!(config.db_max_connections, 4);
         assert_eq!(config.log, "devtab_api=debug,info");
+        assert_eq!(config.site_url, "https://web.example.invalid");
+        assert_eq!(config.payments, None, "no provider is assumed outside dev");
         assert!(!format!("{config:?}").contains("hunter2"));
     }
 
@@ -516,15 +614,72 @@ mod tests {
     }
 
     #[test]
-    fn staging_and_prod_need_the_licence_host_and_the_extension_origins() {
+    fn staging_and_prod_need_the_licence_host_the_extension_origins_and_the_site() {
         for env in ["staging", "prod"] {
             let err = load(&[
                 ("DEVTAB_ENV", env),
                 ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
             ])
             .unwrap_err();
-            assert_eq!(err.0.len(), 2, "{env}: {err}");
+            assert_eq!(err.0.len(), 3, "{env}: {err}");
         }
+    }
+
+    #[test]
+    fn the_plans_settings_default_to_development() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert_eq!(config.site_url, "https://web.example.invalid");
+        assert_eq!(config.payments.as_deref(), Some("fake"));
+        assert_eq!(config.plans_max_age_s, 86_400);
+        assert_eq!(config.rate_limits.plans_per_ip.get(), 60);
+        let catalogue = config.catalogue();
+        assert!(catalogue.test_currencies);
+        assert_eq!(catalogue.provider.as_deref(), Some("fake"));
+    }
+
+    #[test]
+    fn reads_the_plans_settings() {
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SITE_URL", "https://site.example.invalid"),
+            ("DEVTAB_PAYMENTS", "fake"),
+            ("DEVTAB_PLANS_MAX_AGE", "3600"),
+            ("DEVTAB_RATE_PLANS_PER_IP", "5"),
+        ])
+        .unwrap();
+        assert_eq!(config.site_url, "https://site.example.invalid");
+        assert_eq!(config.plans_max_age_s, 3_600);
+        assert_eq!(config.rate_limits.plans_per_ip.get(), 5);
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SITE_URL", "http://site.example.invalid:4321/pro"),
+            ("DEVTAB_PAYMENTS", "paypal"),
+            ("DEVTAB_PLANS_MAX_AGE", "60"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 3, "{err}");
+    }
+
+    #[test]
+    fn the_fake_provider_is_refused_in_prod_and_its_currency_served_only_in_dev() {
+        let outside = |env: &'static str| {
+            [
+                ("DEVTAB_ENV", env),
+                ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+                ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
+                ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+                ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+                ("DEVTAB_PAYMENTS", "fake"),
+            ]
+        };
+        let config = load(&outside("staging")).unwrap();
+        assert!(
+            !config.catalogue().test_currencies,
+            "staging serves no test currency"
+        );
+        let err = load(&outside("prod")).unwrap_err();
+        assert_eq!(err.0.len(), 1, "{err}");
+        assert!(err.0[0].contains("refused in prod"));
     }
 
     #[test]
@@ -564,6 +719,7 @@ mod tests {
                 ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
                 ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
                 ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+                ("DEVTAB_SITE_URL", "https://web.example.invalid"),
                 ("DEVTAB_DEV_SIGNING_KEYS_FILE", "/tmp/keys.json"),
             ])
             .unwrap_err();

@@ -1,0 +1,98 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select plan_id, locale, name, summary, includes as \"includes: Json<Vec<String>>\",\n                  price_note, badge\n           from app.plan_texts order by plan_id, locale",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plan_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_texts",
+            "name": "plan_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "locale",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_texts",
+            "name": "locale"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_texts",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "summary",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_texts",
+            "name": "summary"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "includes: Json<Vec<String>>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "app.plan_texts",
+            "name": "includes"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "price_note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_texts",
+            "name": "price_note"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "badge",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_texts",
+            "name": "badge"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "38e594a9cfb5668d82b2c561582ab2ab9aacfec3ebe2f1179abdc1b0913fd71e"
+}

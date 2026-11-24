@@ -6,7 +6,18 @@ use axum::Json;
 use axum::http::header::RETRY_AFTER;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use serde::Serialize;
 use serde_json::{Value, json};
+use utoipa::ToSchema;
+
+/// The body of every error answer.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorBody {
+    /// A kebab-case code.
+    pub error: String,
+    /// English text for logs and people.
+    pub message: String,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {

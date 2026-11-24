@@ -32,6 +32,8 @@ pub struct Limits {
     pub refresh_per_ip: Arc<Limiter<IpAddr>>,
     pub refresh_per_installation: Limiter<InstallationKey>,
     pub deactivate_per_installation: Limiter<InstallationKey>,
+    /// `GET /v1/plans`, a minute.
+    pub plans_per_ip: Arc<Limiter<IpAddr>>,
 }
 
 fn per_hour<K: Hash + Eq + Clone>(n: NonZeroU32) -> Limiter<K> {
@@ -46,6 +48,9 @@ impl Limits {
             refresh_per_ip: Arc::new(per_hour(quotas.refresh_per_ip)),
             refresh_per_installation: per_hour(quotas.refresh_per_installation),
             deactivate_per_installation: per_hour(quotas.deactivate_per_installation),
+            plans_per_ip: Arc::new(DefaultKeyedRateLimiter::keyed(Quota::per_minute(
+                quotas.plans_per_ip,
+            ))),
         }
     }
 
@@ -57,6 +62,7 @@ impl Limits {
         self.refresh_per_ip.retain_recent();
         self.refresh_per_installation.retain_recent();
         self.deactivate_per_installation.retain_recent();
+        self.plans_per_ip.retain_recent();
     }
 }
 

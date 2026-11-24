@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::http::rate_limit::Limits;
 use crate::licence::LicenceSettings;
 use crate::licence::signer::Signer;
+use crate::plans::catalogue::CatalogueSettings;
 use crate::store::Store;
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,7 @@ pub struct AppState {
     pub signer: Arc<Signer>,
     pub limits: Arc<Limits>,
     pub licence: LicenceSettings,
+    pub catalogue: Arc<CatalogueSettings>,
 }
 
 impl AppState {
@@ -26,6 +28,7 @@ impl AppState {
             signer: Arc::new(signer),
             limits: Arc::new(Limits::new(&config.rate_limits)),
             licence: config.licence,
+            catalogue: Arc::new(config.catalogue()),
         }
     }
 }
