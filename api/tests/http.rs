@@ -2,20 +2,22 @@
 //! network and without a database.
 #![allow(clippy::unwrap_used)]
 
+mod support;
+
 use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{Request, StatusCode};
 use axum::routing::{get, post};
 use devtab_api::http::json::JsonBody;
-use devtab_api::{AppState, Config, Store, http, internal_app, public_app};
+use devtab_api::{AppState, Config, http, internal_app, public_app};
 use http_body_util::BodyExt as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
 /// A state whose database is not there: fine for every route but readyz.
 fn state() -> AppState {
-    AppState::new(Store::connect_lazy("postgres://nobody@127.0.0.1:1/none", 1).unwrap())
+    support::offline_state(&Config::default())
 }
 
 fn public() -> Router {

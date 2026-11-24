@@ -1,0 +1,4 @@
+{
+  "note": "The public keys the API signs licence tokens with; built into devtab-api and checked against DEVTAB_SIGNING_KEY_FILE at start. Empty until production keys are made (admin keys generate --kid p1, p2). Never a test key: in dev the API also trusts the developer's own test key from DEVTAB_DEV_SIGNING_KEYS_FILE, which script/api-dev makes in .state/.",
+  "keys": []
+}

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into app.licences\n           (lid, user_id, customer_id, plan_id, kind, seats, paid_until, cancel_at_period_end,\n            provider, provider_subscription_id, key_hash, key_hint, note)\n         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)\n         returning id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Int4",
+        "Timestamptz",
+        "Bool",
+        "Text",
+        "Text",
+        "Bytea",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a63bae8496da3a9ac43836121b4bbdfd928fe91948dfcc41a621d3a684486072"
+}

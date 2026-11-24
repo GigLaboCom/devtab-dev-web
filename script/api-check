@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 #
 # Every check of the API, in order: rustfmt, clippy with warnings as errors,
-# the tests (the database tests against the local database from script/db-up)
-# and cargo deny. CI runs the same.
+# the tests (the database tests against the local database from script/db-up),
+# the queries' offline data in .sqlx/ against that database, and cargo deny.
+# Clippy and the tests build from .sqlx/ (SQLX_OFFLINE=true), as CI and the
+# image do. CI runs the same.
 #
 #   script/api-check
 #
 # DEVTAB_TEST_DATABASE_URL names another database for the tests (the owner's
-# URL; default: the local one, as `supabase status` reports it).
+# URL; default: the local one, as `supabase status` reports it); the .sqlx/
+# check uses the same one.
 
 set -euo pipefail
 
@@ -24,6 +27,7 @@ cargo fmt --all -- --check
 # Clippy reports a warm cache as clean for lints it never re-evaluated: touch
 # the crate roots so that it checks them again.
 touch api/src/lib.rs api/src/main.rs
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings
+SQLX_OFFLINE=true cargo test --workspace
+DATABASE_URL="$DEVTAB_TEST_DATABASE_URL" script/sqlx-prepare --check
 cargo deny check

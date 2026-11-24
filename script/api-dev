@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 #
 # Runs the API in development: the public listener on :8080 (/api/healthz,
-# /api/readyz) and the internal one on 127.0.0.1:8081 (/internal/healthz),
-# against the local database from script/db-up as the API role, with its
-# password from .state/. Stop it with Ctrl-C; it finishes the requests in
-# flight first.
+# /api/readyz, the extension's /v1/*) and the internal one on 127.0.0.1:8081
+# (/internal/healthz), against the local database from script/db-up as the
+# API role, with its password from .state/, signing licence tokens with a test
+# key of this machine: on first use it makes one in the ignored
+# .state/signing/ (the private key, mode 600, and a key list with its public
+# entry, which the API trusts in dev only). Stop it with Ctrl-C; it finishes
+# the requests in flight first.
 #
 #   script/api-dev
 #
@@ -22,5 +25,21 @@ if [[ -z "${DEVTAB_DATABASE_URL:-}" ]]; then
   DEVTAB_DATABASE_URL="$(api_db_url)"
 fi
 export DEVTAB_DATABASE_URL
+
+# A test key of this machine, never committed; staging and prod refuse it.
+if [[ -z "${DEVTAB_SIGNING_KEY_FILE:-}" ]]; then
+  keys="$root/.state/signing"
+  if [[ ! -s "$keys/test-key.pem" || ! -s "$keys/test-keys.json" ]]; then
+    rm -f "$keys/test-key.pem" "$keys/test-keys.json"
+    (umask 077 && mkdir -p "$keys")
+    cargo run -q -p devtab-api -- admin keys generate --test \
+      --out "$keys/test-key.pem" --list-out "$keys/test-keys.json"
+  fi
+  DEVTAB_SIGNING_KEY_FILE="$keys/test-key.pem"
+  DEVTAB_SIGNING_KID="$(sed -n 's/.*"kid": "\(test-[0-9a-f]*\)".*/\1/p' "$keys/test-keys.json" | head -n 1)"
+  DEVTAB_DEV_SIGNING_KEYS_FILE="${DEVTAB_DEV_SIGNING_KEYS_FILE:-$keys/test-keys.json}"
+  export DEVTAB_DEV_SIGNING_KEYS_FILE
+fi
+export DEVTAB_SIGNING_KEY_FILE DEVTAB_SIGNING_KID
 
 exec cargo run -p devtab-api -- serve

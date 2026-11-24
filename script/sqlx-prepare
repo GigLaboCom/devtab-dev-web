@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# The offline data of the API's `sqlx::query!` macros, in .sqlx/: written
+# from the local database (script/db-up, migrations applied) so that builds
+# need no database (SQLX_OFFLINE=true), or checked against it.
+#
+#   script/sqlx-prepare           write .sqlx/ (commit it with the queries that changed)
+#   script/sqlx-prepare --check   fail when .sqlx/ differs from what the queries need
+#
+# It runs sqlx-cli 0.9.0, the release of the sqlx crate, from the ignored
+# .state/tools/, installing it there on first use; a sqlx-cli on PATH is used
+# only when it is 0.9.0. DATABASE_URL names another database (the owner's
+# URL; default: the local one, as `supabase status` reports it).
+
+set -euo pipefail
+
+# shellcheck source=lib/supabase.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/supabase.sh"
+cd "$root"
+
+version=0.9.0
+tools="$root/.state/tools"
+
+# The directory of a sqlx-cli $version: .state/tools/bin, else the one on PATH.
+sqlx_cli_dir() {
+  local dir
+  for dir in "$tools/bin" "$(dirname "$(command -v cargo-sqlx 2>/dev/null || echo /nonexistent/x)")"; do
+    if [[ -x "$dir/cargo-sqlx" && -x "$dir/sqlx" ]] && "$dir/sqlx" --version 2>/dev/null | grep -qx "sqlx-cli $version"; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
+  echo "Installing sqlx-cli $version into .state/tools (once)..." >&2
+  cargo install sqlx-cli --version "$version" --locked --no-default-features \
+    --features rustls,postgres --root "$tools" >&2
+  printf '%s\n' "$tools/bin"
+}
+
+dir="$(sqlx_cli_dir)"
+if [[ -z "${DATABASE_URL:-}" ]]; then
+  DATABASE_URL="$(local_db_url)"
+fi
+export DATABASE_URL
+unset SQLX_OFFLINE
+
+# `prepare` runs as a cargo subcommand: cargo finds cargo-sqlx on PATH.
+case "${1:-}" in
+  "") PATH="$dir:$PATH" cargo sqlx prepare --workspace ;;
+  --check) PATH="$dir:$PATH" cargo sqlx prepare --workspace --check ;;
+  *)
+    echo "usage: script/sqlx-prepare [--check]" >&2
+    exit 2
+    ;;
+esac

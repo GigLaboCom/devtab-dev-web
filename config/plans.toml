@@ -1,0 +1,28 @@
+# The plans `devtab-api admin plans sync` creates or updates in app.plans.
+#
+# Only the plans' rows so far: their texts and prices are not part of this
+# file yet. An id never changes once synced; licences and the extension's
+# plan cards refer to it. `seats` is how many installations a licence of the
+# plan may have active. Nothing is sold yet, so no plan is available.
+
+[[plan]]
+id = "free"
+kind = "free"
+sort = 1
+available = false
+
+[[plan]]
+id = "pro-monthly"
+kind = "subscription"
+interval = "month"
+seats = 3
+sort = 2
+available = false
+
+[[plan]]
+id = "pro-annual"
+kind = "subscription"
+interval = "year"
+seats = 3
+sort = 3
+available = false

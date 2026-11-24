@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.licences set\n           key_blocked_at = coalesce(key_blocked_at, $2),\n           revoke_reason = case when status = 'revoked' then revoke_reason else 'key-blocked' end,\n           status = 'revoked',\n           revoked_at = coalesce(revoked_at, $2)\n         where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "198c84fe763d0210a3a46a886f0e8ef9f03a59781f0f484ccfde2684a453b301"
+}

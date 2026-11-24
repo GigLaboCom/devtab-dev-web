@@ -1,8 +1,12 @@
 //! HTTP routers and the middleware stack.
 
+pub mod client_ip;
+pub mod cors;
 pub mod error;
 pub mod health;
 pub mod json;
+pub mod rate_limit;
+pub mod v1;
 
 use std::any::Any;
 use std::time::Duration;
@@ -31,13 +35,15 @@ pub const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id"
 pub const BODY_LIMIT: usize = 16 * 1024;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// Routes of the public listener, without middleware.
-pub fn public_routes(_config: &Config, state: AppState) -> Router {
+/// Routes of the public listener, without the standard middleware: the
+/// health checks and the extension's licence endpoints.
+pub fn public_routes(config: &Config, state: AppState) -> Router {
     Router::new()
         .route("/api/healthz", get(health::healthz))
         .route("/api/readyz", get(health::readyz))
+        .with_state(state.clone())
+        .merge(v1::routes(config, state))
         .fallback(|| async { AppError::NotFound })
-        .with_state(state)
 }
 
 /// Routes of the internal listener, without middleware.

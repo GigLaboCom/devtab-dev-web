@@ -1,13 +1,24 @@
-//! `devtab-api` binary: `serve`, `healthcheck`, `version`.
+//! `devtab-api` binary: `serve`, `admin`, `healthcheck`, `version`.
 #![forbid(unsafe_code)]
 
+use std::io::{BufRead as _, Write as _};
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use axum::Router;
 use clap::{Parser, Subcommand};
-use devtab_api::{AppState, Config, Store, telemetry};
+use devtab_api::admin::{self, AdminCommand, KeysCommand};
+use devtab_api::clock::SystemClock;
+use devtab_api::config::Env;
+use devtab_api::licence::signer::{self, KeyList, Signer};
+use devtab_api::store::audit;
+use devtab_api::{AppState, Config, Store, jobs, telemetry};
+use serde_json::json;
+use time::OffsetDateTime;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
@@ -25,7 +36,18 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run the HTTP server: the public and the internal listener.
-    Serve,
+    Serve {
+        /// Sign with a key whose `sign_from` has not come yet: only when the
+        /// signing key leaked and the waiting key takes over. Logged and
+        /// recorded in `admin_audit`.
+        #[arg(long)]
+        emergency_key: bool,
+    },
+    /// Administration: licences, users, installations, plans, signing keys.
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
     /// Probe `GET /api/readyz` on the local public listener; exit 0 on 200.
     Healthcheck,
     /// Print the version and build SHA.
@@ -44,8 +66,105 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Healthcheck => run(healthcheck()),
-        Command::Serve => run(serve()),
+        Command::Serve { emergency_key } => run(serve(emergency_key)),
+        Command::Admin {
+            command: AdminCommand::Keys(command),
+        } => match keys(&command) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("{err:#}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Admin { command } => run(admin_db(command)),
     }
+}
+
+/// `admin keys …`: no database, no other configuration.
+fn keys(command: &KeysCommand) -> anyhow::Result<()> {
+    let mut out = std::io::stdout().lock();
+    match command {
+        KeysCommand::Generate {
+            kid,
+            test,
+            out: path,
+            list_out,
+        } => admin::keys_generate(
+            kid.as_deref(),
+            *test,
+            path,
+            list_out.as_deref(),
+            OffsetDateTime::now_utc(),
+            &mut out,
+        ),
+        KeysCommand::Check => {
+            let var = |key: &str| std::env::var(key).ok().filter(|v| !v.trim().is_empty());
+            let env = Env::parse(var("DEVTAB_ENV").as_deref()).map_err(anyhow::Error::msg)?;
+            let file = var("DEVTAB_SIGNING_KEY_FILE").map(PathBuf::from);
+            let kid = var("DEVTAB_SIGNING_KID");
+            let dev_keys = var("DEVTAB_DEV_SIGNING_KEYS_FILE").map(PathBuf::from);
+            admin::keys_check(
+                env,
+                file.as_deref(),
+                kid.as_deref(),
+                dev_keys.as_deref(),
+                OffsetDateTime::now_utc(),
+                &mut out,
+            )
+        }
+    }
+}
+
+/// The admin commands that use the database, each in one transaction.
+async fn admin_db(command: AdminCommand) -> anyhow::Result<()> {
+    let config = Config::from_env()?;
+    let store =
+        Store::connect_lazy(&config.database_url, 1).context("invalid DEVTAB_DATABASE_URL")?;
+    let mut tx = store
+        .pool()
+        .begin()
+        .await
+        .context("connecting to the database")?;
+    let mut stdout = std::io::stdout().lock();
+    let mut ctx = admin::Context {
+        actor: admin::actor(),
+        now: OffsetDateTime::now_utc(),
+        out: &mut stdout,
+    };
+    let mut confirm = || {
+        print!("Apply these changes? [y/N] ");
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        std::io::stdin().lock().read_line(&mut answer).is_ok()
+            && matches!(answer.trim(), "y" | "Y" | "yes")
+    };
+    admin::execute(&command, &mut tx, &mut ctx, &mut confirm).await?;
+    tx.commit().await.context("committing")?;
+    Ok(())
+}
+
+/// The signing key from `DEVTAB_SIGNING_KEY_FILE`, checked against the
+/// published list: `serve` does not start with a key it may not sign with.
+fn signing_key(config: &Config, emergency: bool) -> anyhow::Result<Signer> {
+    let (Some(file), Some(kid)) = (&config.signing_key_file, &config.signing_kid) else {
+        anyhow::bail!("DEVTAB_SIGNING_KEY_FILE and DEVTAB_SIGNING_KID are required to serve");
+    };
+    let signer = Signer::load(kid, file)?;
+    let keys = KeyList::trusted(config.env, config.dev_signing_keys_file.as_deref())?;
+    signer::check(
+        &signer,
+        &keys,
+        config.env,
+        OffsetDateTime::now_utc(),
+        emergency,
+    )
+    .map_err(|problems| {
+        anyhow::anyhow!(
+            "the signing key cannot be used:\n  - {}",
+            problems.join("\n  - ")
+        )
+    })?;
+    Ok(signer)
 }
 
 fn run(fut: impl Future<Output = anyhow::Result<()>>) -> ExitCode {
@@ -68,13 +187,32 @@ fn run(fut: impl Future<Output = anyhow::Result<()>>) -> ExitCode {
     }
 }
 
-async fn serve() -> anyhow::Result<()> {
+async fn serve(emergency_key: bool) -> anyhow::Result<()> {
     let config = Config::from_env()?;
     telemetry::init(&config);
 
+    let signer = signing_key(&config, emergency_key)?;
     let store = Store::connect_lazy(&config.database_url, config.db_max_connections)
         .context("invalid DEVTAB_DATABASE_URL")?;
-    let state = AppState::new(store);
+    if emergency_key {
+        tracing::warn!(
+            kid = signer.kid(),
+            "signing with --emergency-key: sign_from not checked"
+        );
+        let recorded = audit::record(
+            store.pool(),
+            &admin::actor(),
+            "keys.emergency",
+            None,
+            &json!({ "kid": signer.kid() }),
+            OffsetDateTime::now_utc(),
+        )
+        .await;
+        if let Err(err) = recorded {
+            tracing::warn!(error = %err, "could not record --emergency-key in admin_audit");
+        }
+    }
+    let state = AppState::new(store, Arc::new(SystemClock), signer, &config);
     let public = TcpListener::bind(config.public_addr)
         .await
         .with_context(|| format!("binding the public listener to {}", config.public_addr))?;
@@ -85,11 +223,13 @@ async fn serve() -> anyhow::Result<()> {
         public = %config.public_addr,
         internal = %config.internal_addr,
         env = ?config.env,
+        kid = state.signer.kid(),
         version = env!("CARGO_PKG_VERSION"),
         "api started"
     );
 
     let (stop_tx, stop_rx) = watch::channel(());
+    let scheduler = jobs::scheduler::spawn(state.clone(), stop_rx.clone());
     let public_app = devtab_api::public_app(&config, state.clone());
     let internal_app = devtab_api::internal_app(&config, state);
     let mut servers = tokio::spawn(async move {
@@ -118,6 +258,7 @@ async fn serve() -> anyhow::Result<()> {
     } else {
         tracing::warn!("drain timeout reached, dropping open connections");
     }
+    let _ = scheduler.await;
     tracing::info!("api stopped");
     Ok(())
 }
@@ -130,12 +271,15 @@ async fn listen(
     app: Router,
     mut stop: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let _ = stop.changed().await;
-        })
-        .await
-        .with_context(|| format!("the {name} listener failed"))
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = stop.changed().await;
+    })
+    .await
+    .with_context(|| format!("the {name} listener failed"))
 }
 
 async fn shutdown_signal() {

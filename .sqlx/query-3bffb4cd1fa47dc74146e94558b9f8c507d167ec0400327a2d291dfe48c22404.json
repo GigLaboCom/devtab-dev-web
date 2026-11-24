@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.licences set\n           status = 'revoked', revoke_reason = 'refund', revoked_at = coalesce(revoked_at, $2)\n         where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3bffb4cd1fa47dc74146e94558b9f8c507d167ec0400327a2d291dfe48c22404"
+}

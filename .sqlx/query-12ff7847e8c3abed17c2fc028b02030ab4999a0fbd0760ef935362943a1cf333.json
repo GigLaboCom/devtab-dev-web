@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.installations set\n           status = 'deactivated', released_reason = null, released_at = $2\n         where id = $1 and status <> 'deactivated'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "12ff7847e8c3abed17c2fc028b02030ab4999a0fbd0760ef935362943a1cf333"
+}

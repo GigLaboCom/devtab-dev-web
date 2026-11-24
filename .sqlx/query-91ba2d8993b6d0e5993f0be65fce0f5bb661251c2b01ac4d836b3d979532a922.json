@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.installations set\n           last_seen_at = $2, status = 'active', released_reason = null, released_at = null\n         where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "91ba2d8993b6d0e5993f0be65fce0f5bb661251c2b01ac4d836b3d979532a922"
+}

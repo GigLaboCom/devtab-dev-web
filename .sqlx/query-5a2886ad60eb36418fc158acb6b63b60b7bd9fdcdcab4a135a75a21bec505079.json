@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select app.user_id_by_email($1) as id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5a2886ad60eb36418fc158acb6b63b60b7bd9fdcdcab4a135a75a21bec505079"
+}

@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into app.installations\n           (licence_id, inst, secret_hash, status, activated_at, last_seen_at)\n         values ($1, $2, $3, 'active', $4, $4)\n         on conflict (licence_id, inst) do update set\n           secret_hash = excluded.secret_hash, status = 'active', released_reason = null,\n           released_at = null, activated_at = excluded.activated_at,\n           last_seen_at = excluded.last_seen_at\n         returning id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "53310509ecca44eb6985eb35ccfb7c8a2f52ad4e450761188275dcbb8f1ff5b2"
+}

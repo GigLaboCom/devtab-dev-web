@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into app.admin_audit (at, actor, action, licence_id, details)\n         values ($1, $2, $3, $4, $5)\n         returning id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "app.admin_audit",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "26e7de9899e2824d8236013caa7a845b4283be2b839ff86309936691b8190969"
+}

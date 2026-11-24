@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, licence_id, inst, secret_hash, status, released_reason, activated_at,\n                last_seen_at, released_at\n         from app.installations where licence_id = $1\n         order by activated_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "licence_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "licence_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "inst",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "inst"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "secret_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "secret_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "released_reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "released_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "activated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "activated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "last_seen_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "released_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "released_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "4b56e49f7719acb8ef6511f609fbc12b727be2b1cfcd7180896a30a4e46b08b4"
+}

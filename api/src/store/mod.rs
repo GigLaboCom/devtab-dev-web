@@ -1,4 +1,16 @@
-//! Database access: the Postgres pool. The schema comes from `supabase/migrations/`.
+//! Database access: the Postgres pool and the queries, one module per table.
+//! The schema comes from `supabase/migrations/`; queries are `sqlx::query!`,
+//! checked against it at build time (offline data in `.sqlx/`). They name
+//! every table with its schema, `app.`, so that they do not depend on the
+//! search path.
+
+pub mod audit;
+pub mod customers;
+pub mod installations;
+pub mod jobs;
+pub mod licences;
+pub mod plans;
+pub mod users;
 
 use std::time::Duration;
 
@@ -28,6 +40,11 @@ impl Store {
             })
             .connect_lazy(url)?;
         Ok(Self { pool })
+    }
+
+    /// A store over a pool made elsewhere (tests that act as the API role).
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
     }
 
     pub fn pool(&self) -> &PgPool {

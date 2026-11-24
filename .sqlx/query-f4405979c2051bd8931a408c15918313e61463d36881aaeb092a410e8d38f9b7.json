@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.installations set\n           status = 'released', released_reason = $2, released_at = $3\n         where id = $1 and status = 'active'\n         returning licence_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "licence_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.installations",
+            "name": "licence_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f4405979c2051bd8931a408c15918313e61463d36881aaeb092a410e8d38f9b7"
+}
