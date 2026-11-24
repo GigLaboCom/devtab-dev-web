@@ -1,0 +1,329 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "devtab-api internal",
+    "description": "The internal listener of devtab-api, for the site's own pages only. Every error answers {\"error\": \"<kebab-case code>\", \"message\": \"<English text>\"}.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/internal/healthz": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "`GET /internal/healthz`.",
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "The process is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/plans": {
+      "get": {
+        "tags": [
+          "plans"
+        ],
+        "summary": "`GET /internal/plans`: the catalogue for the site's pages.",
+        "operationId": "internal_plans",
+        "parameters": [
+          {
+            "name": "locale",
+            "in": "query",
+            "description": "The language of the plans' texts; `en` when absent.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Locale"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every plan whose offer has not ended, in the order of the cards, with the texts of the language asked for; `available` says which can be bought now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteCatalogue"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified: the `If-None-Match` names the current `ETag`"
+          },
+          "400": {
+            "description": "An unknown language",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorBody": {
+        "type": "object",
+        "description": "The body of every error answer.",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "A kebab-case code."
+          },
+          "message": {
+            "type": "string",
+            "description": "English text for logs and people."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "description": "The process is up.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always `ok`."
+          }
+        }
+      },
+      "Locale": {
+        "type": "string",
+        "description": "The languages of the site's pages.",
+        "enum": [
+          "en",
+          "ru"
+        ]
+      },
+      "Plan": {
+        "type": "object",
+        "description": "A plan as its card shows it.",
+        "required": [
+          "id",
+          "kind",
+          "term",
+          "name",
+          "summary",
+          "includes",
+          "price",
+          "priceNote",
+          "badge",
+          "checkoutUrl",
+          "until"
+        ],
+        "properties": {
+          "badge": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At most 24 characters."
+          },
+          "checkoutUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where a paid plan is bought; null for a free plan."
+          },
+          "id": {
+            "type": "string",
+            "description": "`[a-z0-9-]{1,32}`; never changes."
+          },
+          "includes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "0–8 lines of 1–100 characters, in the order to show."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PlanKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "1–32 characters."
+          },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Price",
+                "description": "A paid plan's price; null for a free plan."
+              }
+            ]
+          },
+          "priceNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At most 60 characters."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "At most 140 characters."
+          },
+          "term": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Term",
+                "description": "A paid plan's billing period; null for a free plan."
+              }
+            ]
+          },
+          "until": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The end of a limited offer, Unix seconds."
+          }
+        }
+      },
+      "PlanKind": {
+        "type": "string",
+        "description": "`free` or `paid`.",
+        "enum": [
+          "free",
+          "paid"
+        ]
+      },
+      "Price": {
+        "type": "object",
+        "description": "A price: the amount in the currency's minor units, and the currency.",
+        "required": [
+          "amount",
+          "currency"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Minor units (cents), 0 to 100 000 000."
+          },
+          "currency": {
+            "type": "string",
+            "description": "ISO 4217, upper case."
+          }
+        }
+      },
+      "SiteCatalogue": {
+        "type": "object",
+        "description": "The answer of `GET /internal/plans`.",
+        "required": [
+          "v",
+          "catalog",
+          "maxAge",
+          "manageUrl",
+          "locale",
+          "plans"
+        ],
+        "properties": {
+          "catalog": {
+            "type": "string",
+            "description": "The catalogue's version."
+          },
+          "locale": {
+            "type": "string",
+            "description": "The language asked for."
+          },
+          "manageUrl": {
+            "type": "string",
+            "description": "Where a subscription is managed."
+          },
+          "maxAge": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Seconds the answer is fresh.",
+            "minimum": 0
+          },
+          "plans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SitePlan"
+            },
+            "description": "In the order of the cards."
+          },
+          "v": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The format version, 1.",
+            "minimum": 0
+          }
+        }
+      },
+      "SitePlan": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Plan"
+          },
+          {
+            "type": "object",
+            "required": [
+              "available",
+              "locale"
+            ],
+            "properties": {
+              "available": {
+                "type": "boolean",
+                "description": "Whether it can be bought now; the page shows \"soon\" instead of a\nbutton when not."
+              },
+              "locale": {
+                "type": "string",
+                "description": "The language of its texts: the one asked for, or `en` where the plan\nhas none in it."
+              }
+            }
+          }
+        ],
+        "description": "A plan as the site's pages show it."
+      },
+      "Term": {
+        "type": "string",
+        "description": "A subscription's billing period.",
+        "enum": [
+          "month",
+          "year"
+        ]
+      }
+    }
+  }
+}

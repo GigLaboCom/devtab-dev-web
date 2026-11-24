@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# The generated files of the API's internal listener, from the API's code:
+#   contract/internal-openapi.json   `devtab-api openapi`: the OpenAPI document of the internal listener
+#                                    (utoipa annotations in api/src/http/)
+#   src/lib/api/schema.gen.ts        openapi-typescript over it: the types the site's pages call it with
+# Only this script writes them; commit them with the change that moved them.
+#
+#   script/gen           write both
+#   script/gen --check   fail when either differs from what the code gives (script/check-all, CI)
+#
+# The API builds from the committed .sqlx/ (SQLX_OFFLINE=true): no database is needed.
+
+set -euo pipefail
+
+root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+cd "$root"
+
+mode="${1:-write}"
+case "$mode" in
+  write | --check) ;;
+  *)
+    echo "usage: script/gen [--check]" >&2
+    exit 2
+    ;;
+esac
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+SQLX_OFFLINE=true cargo run --quiet --locked -p devtab-api -- openapi >"$tmp/internal-openapi.json"
+pnpm exec openapi-typescript "$tmp/internal-openapi.json" --output "$tmp/schema.gen.ts" >/dev/null 2>"$tmp/openapi-typescript.log" ||
+  {
+    cat "$tmp/openapi-typescript.log" >&2
+    exit 1
+  }
+
+# generated file : file in the repository
+pairs=(
+  "internal-openapi.json:contract/internal-openapi.json"
+  "schema.gen.ts:src/lib/api/schema.gen.ts"
+)
+
+status=0
+for pair in "${pairs[@]}"; do
+  made="$tmp/${pair%%:*}"
+  target="${pair#*:}"
+  if [[ "$mode" == --check ]]; then
+    if ! cmp -s "$made" "$target"; then
+      echo "gen: $target is not what the code gives:" >&2
+      diff -u "$target" "$made" | head -n 40 >&2 || true
+      status=1
+    fi
+  else
+    mkdir -p "$(dirname "$target")"
+    cp "$made" "$target"
+    echo "wrote $target"
+  fi
+done
+if [[ $status -ne 0 ]]; then
+  echo "gen: run script/gen and commit the result" >&2
+  exit 1
+fi
+[[ "$mode" == --check ]] && echo "gen: contract/internal-openapi.json and src/lib/api/schema.gen.ts are current"
+exit 0

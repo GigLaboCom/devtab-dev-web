@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GET /v1/plans: the body of a 200 answer",
+  "description": "The plans catalogue as this server sends it: format 1, every plan valid by the extension's rules so that none is skipped. Lengths count Unicode code points of the trimmed text. The extension allows extra fields; this server sends none. An empty list is what the server sends when nothing is offered; the extension reads it as 'empty' (no usable answer) and keeps what it had.",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "catalog": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,40}$"
+    },
+    "maxAge": {
+      "type": "integer",
+      "minimum": 3600,
+      "maximum": 604800
+    },
+    "manageUrl": {
+      "type": "string",
+      "pattern": "^https://[a-z0-9.-]+/pro/manage/$",
+      "maxLength": 300
+    },
+    "plans": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,32}$"
+          },
+          "kind": {
+            "enum": ["free", "paid"]
+          },
+          "term": {
+            "enum": ["month", "year", null]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          },
+          "summary": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "includes": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000000
+                  },
+                  "currency": {
+                    "type": "string",
+                    "pattern": "^[A-Z]{3}$"
+                  }
+                },
+                "required": ["amount", "currency"],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "priceNote": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "badge": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 24
+          },
+          "checkoutUrl": {
+            "type": ["string", "null"],
+            "pattern": "^https://[a-z0-9.-]+/pro/checkout/\\?plan=[a-z0-9-]{1,32}$",
+            "maxLength": 300
+          },
+          "until": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "term",
+          "name",
+          "summary",
+          "includes",
+          "price",
+          "priceNote",
+          "badge",
+          "checkoutUrl",
+          "until"
+        ],
+        "additionalProperties": false,
+        "if": {
+          "properties": {
+            "kind": {
+              "const": "free"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "term": {
+              "const": null
+            },
+            "price": {
+              "const": null
+            },
+            "checkoutUrl": {
+              "const": null
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "term": {
+              "enum": ["month", "year"]
+            },
+            "price": {
+              "type": "object"
+            },
+            "checkoutUrl": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": ["v", "catalog", "maxAge", "manageUrl", "plans"],
+  "additionalProperties": false
+}

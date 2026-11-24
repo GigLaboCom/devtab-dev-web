@@ -1,5 +1,5 @@
 {
-  "note": "The error codes of the licence endpoints, their HTTP statuses, and which endpoint may answer each. Any other code or body is 'not reached' to the extension.",
+  "note": "The error codes of the licence and plans endpoints, their HTTP statuses, and which endpoint may answer each. Any other code or body is 'not reached' to the extension.",
   "codes": {
     "bad-request": 400,
     "key-blocked": 403,
@@ -30,6 +30,10 @@
     "deactivate": [
       "bad-request",
       "payload-too-large",
+      "rate-limited",
+      "unavailable"
+    ],
+    "plans": [
       "rate-limited",
       "unavailable"
     ]

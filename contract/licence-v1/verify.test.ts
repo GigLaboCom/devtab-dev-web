@@ -126,10 +126,11 @@ test('the dates of every active token obey exp = min(iat + 30 d, end), chk = min
   }
 });
 
-test('errors.json is the reference error table for the licence endpoints', () => {
+test('errors.json is the reference error table for the licence and plans endpoints', () => {
   const errors = json('errors.json');
   assert.deepEqual(errors.codes, ERRORS);
-  for (const endpoint of ['activate', 'refresh', 'deactivate']) {
+  assert.deepEqual(Object.keys(errors.endpoints).sort(), Object.keys(ENDPOINT_ERRORS).sort());
+  for (const endpoint of ['activate', 'refresh', 'deactivate', 'plans']) {
     assert.deepEqual(errors.endpoints[endpoint], ENDPOINT_ERRORS[endpoint], endpoint);
   }
 });

@@ -1,0 +1,264 @@
+{
+  "cases": [
+    {
+      "body": {
+        "catalog": "2026-11-24.1",
+        "manageUrl": "https://web.example.invalid/pro/manage/",
+        "maxAge": 86400,
+        "plans": [
+          {
+            "badge": null,
+            "checkoutUrl": null,
+            "id": "free",
+            "includes": [
+              "All 44 tools",
+              "Nothing you paste leaves this browser"
+            ],
+            "kind": "free",
+            "name": "Free",
+            "price": null,
+            "priceNote": null,
+            "summary": "Every tool, in full, offline.",
+            "term": null,
+            "until": null
+          },
+          {
+            "badge": null,
+            "checkoutUrl": "https://web.example.invalid/pro/checkout/?plan=pro-monthly",
+            "id": "pro-monthly",
+            "includes": [
+              "Tool history and its archive",
+              "Tools remember your options",
+              "Copy automatically after generating"
+            ],
+            "kind": "paid",
+            "name": "Monthly",
+            "price": {
+              "amount": 1111,
+              "currency": "XTS"
+            },
+            "priceNote": "Tax calculated at checkout.",
+            "summary": "Pro, billed every month.",
+            "term": "month",
+            "until": null
+          },
+          {
+            "badge": "Save with a year",
+            "checkoutUrl": "https://web.example.invalid/pro/checkout/?plan=pro-annual",
+            "id": "pro-annual",
+            "includes": [
+              "Everything in Monthly"
+            ],
+            "kind": "paid",
+            "name": "Annually",
+            "price": {
+              "amount": 11110,
+              "currency": "XTS"
+            },
+            "priceNote": "Tax calculated at checkout.",
+            "summary": "Pro, billed once a year.",
+            "term": "year",
+            "until": null
+          }
+        ],
+        "v": 1
+      },
+      "bytes": 1088,
+      "env": "dev",
+      "expect": {
+        "production": {
+          "dropped": [
+            {
+              "index": 1,
+              "why": "currency"
+            },
+            {
+              "index": 2,
+              "why": "currency"
+            }
+          ],
+          "kept": [
+            "free"
+          ],
+          "ok": true
+        },
+        "test": {
+          "dropped": [],
+          "kept": [
+            "free",
+            "pro-monthly",
+            "pro-annual"
+          ],
+          "ok": true
+        }
+      },
+      "name": "three-plans"
+    },
+    {
+      "body": {
+        "catalog": "2026-11-24.1",
+        "manageUrl": "https://web.example.invalid/pro/manage/",
+        "maxAge": 86400,
+        "plans": [
+          {
+            "badge": null,
+            "checkoutUrl": null,
+            "id": "free",
+            "includes": [
+              "All 44 tools",
+              "Nothing you paste leaves this browser"
+            ],
+            "kind": "free",
+            "name": "Free",
+            "price": null,
+            "priceNote": null,
+            "summary": "Every tool, in full, offline.",
+            "term": null,
+            "until": null
+          },
+          {
+            "badge": null,
+            "checkoutUrl": "https://web.example.invalid/pro/checkout/?plan=pro-monthly",
+            "id": "pro-monthly",
+            "includes": [
+              "Tool history and its archive",
+              "Tools remember your options",
+              "Copy automatically after generating"
+            ],
+            "kind": "paid",
+            "name": "Monthly",
+            "price": {
+              "amount": 1111,
+              "currency": "XTS"
+            },
+            "priceNote": "Tax calculated at checkout.",
+            "summary": "Pro, billed every month.",
+            "term": "month",
+            "until": null
+          },
+          {
+            "badge": "Save with a year",
+            "checkoutUrl": "https://web.example.invalid/pro/checkout/?plan=pro-annual",
+            "id": "pro-annual",
+            "includes": [
+              "Everything in Monthly"
+            ],
+            "kind": "paid",
+            "name": "Annually",
+            "price": {
+              "amount": 11110,
+              "currency": "XTS"
+            },
+            "priceNote": "Tax calculated at checkout.",
+            "summary": "Pro, billed once a year.",
+            "term": "year",
+            "until": 1798761600
+          }
+        ],
+        "v": 1
+      },
+      "bytes": 1094,
+      "env": "dev",
+      "expect": {
+        "production": {
+          "dropped": [
+            {
+              "index": 1,
+              "why": "currency"
+            },
+            {
+              "index": 2,
+              "why": "currency"
+            }
+          ],
+          "kept": [
+            "free"
+          ],
+          "ok": true
+        },
+        "test": {
+          "dropped": [],
+          "kept": [
+            "free",
+            "pro-monthly",
+            "pro-annual"
+          ],
+          "ok": true
+        }
+      },
+      "name": "limited-offer"
+    },
+    {
+      "body": {
+        "catalog": "2026-11-24.1",
+        "manageUrl": "https://web.example.invalid/pro/manage/",
+        "maxAge": 86400,
+        "plans": [
+          {
+            "badge": null,
+            "checkoutUrl": null,
+            "id": "free",
+            "includes": [
+              "All 44 tools",
+              "Nothing you paste leaves this browser"
+            ],
+            "kind": "free",
+            "name": "Free",
+            "price": null,
+            "priceNote": null,
+            "summary": "Every tool, in full, offline.",
+            "term": null,
+            "until": null
+          }
+        ],
+        "v": 1
+      },
+      "bytes": 350,
+      "env": "staging",
+      "expect": {
+        "production": {
+          "dropped": [],
+          "kept": [
+            "free"
+          ],
+          "ok": true
+        },
+        "test": {
+          "dropped": [],
+          "kept": [
+            "free"
+          ],
+          "ok": true
+        }
+      },
+      "name": "staging-with-the-fake-provider"
+    },
+    {
+      "body": {
+        "catalog": "2026-11-24.1",
+        "manageUrl": "https://web.example.invalid/pro/manage/",
+        "maxAge": 86400,
+        "plans": [],
+        "v": 1
+      },
+      "bytes": 112,
+      "env": "dev",
+      "expect": {
+        "production": {
+          "ok": false,
+          "why": "empty"
+        },
+        "test": {
+          "ok": false,
+          "why": "empty"
+        }
+      },
+      "name": "repository-nothing-offered"
+    }
+  ],
+  "note": "Answers of GET /v1/plans this server builds (tests/plans.rs, server_catalogs), with what the extension's parseCatalog must make of each: `test` with the currencies of a test or development build (Intl plus XTS), `production` with Intl's alone. Placeholder texts and the fake provider's prices in XTS only.",
+  "now": 1795478400,
+  "payHosts": [
+    "web.example.invalid"
+  ]
+}
