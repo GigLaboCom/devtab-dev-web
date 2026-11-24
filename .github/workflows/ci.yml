@@ -53,6 +53,9 @@ jobs:
         run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      # The licence contract with the extension: the backend's test tokens
+      # through the copied reference check, the copies against their checksums.
+      - run: pnpm test:contract
 
   api:
     name: api
@@ -62,6 +65,8 @@ jobs:
       # Usage data off. CLI 2.54 collects none; later releases read these two.
       SUPABASE_TELEMETRY_DISABLED: '1'
       DO_NOT_TRACK: '1'
+      # The queries build from the committed .sqlx/; one step checks it against the database.
+      SQLX_OFFLINE: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -91,10 +96,17 @@ jobs:
         with:
           tool: cargo-deny@0.20.2
           fallback: none
+      # No official prebuilt binary: built from crates.io, the release of the sqlx crate.
+      - name: Install sqlx-cli 0.9.0
+        run: cargo install sqlx-cli --version 0.9.0 --locked --no-default-features --features rustls,postgres
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: cargo test (with the database)
         run: cargo test --locked --workspace
+      - name: The queries' offline data (.sqlx/) is current
+        env:
+          DATABASE_URL: ${{ env.DEVTAB_TEST_DATABASE_URL }}
+        run: script/sqlx-prepare --check
       - name: Release build
         run: cargo build --locked --release -p devtab-api
       - run: cargo deny check
