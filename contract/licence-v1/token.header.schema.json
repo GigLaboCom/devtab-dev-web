@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "The licence token's header",
+  "description": "A compact JWS: base64url(header).base64url(claims).base64url(signature), without padding. The signature is 64 bytes r||s (ES256, P-256 with SHA-256) over the ASCII of the first two parts as sent. The header has exactly these three fields; a token is at most 4096 characters.",
+  "type": "object",
+  "properties": {
+    "alg": {
+      "const": "ES256"
+    },
+    "kid": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]{1,32}$"
+    },
+    "typ": {
+      "const": "devtab-licence"
+    }
+  },
+  "required": [
+    "alg",
+    "kid",
+    "typ"
+  ],
+  "additionalProperties": false
+}

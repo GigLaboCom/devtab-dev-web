@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "POST /v1/activate: the body of a 200 answer",
+  "description": "The token is always active (token.claims.schema.json); the server makes 43-character secrets.",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "secret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{32,128}$"
+    }
+  },
+  "required": [
+    "token",
+    "secret"
+  ],
+  "additionalProperties": false
+}

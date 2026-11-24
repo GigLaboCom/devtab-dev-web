@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "POST /v1/refresh: the request body",
+  "description": "Exactly these fields; anything else is 400 bad-request.",
+  "type": "object",
+  "properties": {
+    "lid": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{8,64}$"
+    },
+    "inst": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "secret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{32,128}$"
+    }
+  },
+  "required": [
+    "lid",
+    "inst",
+    "secret"
+  ],
+  "additionalProperties": false
+}

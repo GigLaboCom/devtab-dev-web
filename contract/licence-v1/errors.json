@@ -1,0 +1,37 @@
+{
+  "note": "The error codes of the licence endpoints, their HTTP statuses, and which endpoint may answer each. Any other code or body is 'not reached' to the extension.",
+  "codes": {
+    "bad-request": 400,
+    "key-blocked": 403,
+    "licence-inactive": 403,
+    "key-unknown": 404,
+    "seat-limit": 409,
+    "payload-too-large": 413,
+    "rate-limited": 429,
+    "unavailable": 503
+  },
+  "endpoints": {
+    "activate": [
+      "bad-request",
+      "key-blocked",
+      "licence-inactive",
+      "key-unknown",
+      "seat-limit",
+      "payload-too-large",
+      "rate-limited",
+      "unavailable"
+    ],
+    "refresh": [
+      "bad-request",
+      "payload-too-large",
+      "rate-limited",
+      "unavailable"
+    ],
+    "deactivate": [
+      "bad-request",
+      "payload-too-large",
+      "rate-limited",
+      "unavailable"
+    ]
+  }
+}

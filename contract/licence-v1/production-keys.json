@@ -1,0 +1,4 @@
+{
+  "note": "The production public keys the extension ships (kid, jwk). Empty until production keys are made; a test key never appears here.",
+  "keys": []
+}

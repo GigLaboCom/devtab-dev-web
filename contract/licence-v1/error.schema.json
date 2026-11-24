@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "The body of every error answer",
+  "description": "The extension reads only `error`; `message` is English text for logs and people. Codes and their HTTP statuses: errors.json. 429 always carries Retry-After in whole seconds; 503 carries it only when the server knows when it will answer again.",
+  "type": "object",
+  "properties": {
+    "error": {
+      "type": "string",
+      "pattern": "^[a-z]+(-[a-z]+)*$"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "error",
+    "message"
+  ],
+  "additionalProperties": false
+}

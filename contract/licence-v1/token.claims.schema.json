@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "The licence token's claims",
+  "description": "Times are whole Unix seconds. Beyond this schema: an active token has iat < chk <= warn <= exp; ended and revoked have warn = exp = iat <= chk. With end = paid + the dunning grace (a subscription) or paid (a complimentary licence with an end), an active token has exp = min(iat + 30 d, end), chk = min(iat + 7 d, exp), warn = max(exp - 7 d, chk), and without an end chk = iat + 7 d, warn = iat + 23 d, exp = iat + 30 d; an active licence with end <= iat is signed ended (chk = iat + 7 d). Extra fields are allowed and not read.",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "lid": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{8,64}$"
+    },
+    "inst": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "plan": {
+      "const": "pro"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "ended",
+        "revoked"
+      ]
+    },
+    "reason": {
+      "enum": [
+        "refund",
+        "deactivated",
+        "key-blocked",
+        "seat-limit",
+        "unknown-installation"
+      ]
+    },
+    "iat": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "chk": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warn": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exp": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "paid": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "term": {
+      "enum": [
+        "month",
+        "year"
+      ]
+    },
+    "renews": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "v",
+    "lid",
+    "inst",
+    "plan",
+    "status",
+    "iat",
+    "chk",
+    "warn",
+    "exp",
+    "paid"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "revoked"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reason"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "term"
+              ]
+            },
+            {
+              "required": [
+                "renews"
+              ]
+            }
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "reason"
+          ]
+        }
+      }
+    }
+  ]
+}

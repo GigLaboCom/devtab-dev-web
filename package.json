@@ -18,6 +18,7 @@
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "test": "node --test tests/*.test.ts",
+    "test:contract": "node --test contract/licence-v1/*.test.ts",
     "hooks": "script/install-hooks"
   },
   "dependencies": {

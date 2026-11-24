@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Everything CI checks: the site (pnpm check), then the API (script/api-check,
-# which needs the local database: script/db-up). Run it before a commit that
-# touches api/ or supabase/.
+# Everything CI checks: the site (pnpm check), the licence contract with the
+# extension (pnpm test:contract), then the API (script/api-check, which needs
+# the local database: script/db-up). Run it before a commit that touches
+# api/, supabase/, config/ or contract/.
 #
 #   script/check-all
 
@@ -12,4 +13,5 @@ root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 cd "$root"
 
 pnpm check
+pnpm test:contract
 script/api-check

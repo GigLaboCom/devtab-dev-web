@@ -7,7 +7,9 @@ title = "site gitleaks config"
 # The default rules.
 useDefault = true
 
-[allowlist]
+# Every rule. (The older single `[allowlist]` cannot stand next to the
+# rule-specific `[[allowlists]]` below.)
+[[allowlists]]
 description = "Dependencies, build output, the lockfile and binary assets"
 paths = [
   '''(^|/)node_modules/''',
@@ -16,3 +18,10 @@ paths = [
   '''(^|/)pnpm-lock\.yaml$''',
   '''\.(png|jpe?g|webp|avif|ico|woff2?)$''',
 ]
+
+# The licence contract's test tokens, and nothing else: signed with keys made
+# for one run and never stored, for the contract tests. One rule, one path.
+[[allowlists]]
+description = "Licence tokens signed with test keys, for the contract tests"
+targetRules = ["jwt"]
+paths = ['''^contract/licence-v1/(server|extension)-vectors\.json$''']

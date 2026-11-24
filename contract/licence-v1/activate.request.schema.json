@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "POST /v1/activate: the request body",
+  "description": "Exactly these fields. A body that breaks this schema is 400 bad-request; a key that passes it but is not of the server's format is 404 key-unknown.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "pattern": "^[\\x21-\\x7e]{16,128}$"
+    },
+    "inst": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    }
+  },
+  "required": [
+    "key",
+    "inst"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "POST /v1/deactivate: the request body",
+  "description": "As refresh. The answer is always 204 without a body, whether or not anything matched; errors are 400, 413, 429, 503 only.",
+  "type": "object",
+  "properties": {
+    "lid": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{8,64}$"
+    },
+    "inst": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "secret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{32,128}$"
+    }
+  },
+  "required": [
+    "lid",
+    "inst",
+    "secret"
+  ],
+  "additionalProperties": false
+}

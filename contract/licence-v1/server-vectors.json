@@ -1,0 +1,427 @@
+{
+  "iat": 1795392000,
+  "keys": [
+    {
+      "jwk": {
+        "crv": "P-256",
+        "kty": "EC",
+        "x": "3892nGmmuBkAdSDO-yTjGtt0hU3Gcw4Qq6hzYF8k-S0",
+        "y": "ppsM0vK8JEGhKfpc6BF-tzWawaPRtZSPyn71TpqUDws"
+      },
+      "kid": "test-ba471c5e"
+    }
+  ],
+  "note": "DEVTAB_LICENCE_TEST. Test vectors of the licence token from the licence server: a public key made for one run of the backend's contract test (its private key was never stored) and tokens it signed, one per case of the issuing rules and per revoke reason, plus broken ones. Not a key or a token of the product. `verify` is the outcome of verifyToken against `keys` (\"ok\" or the reason); `state` is what evaluate gives for the record { inst, token } at `now` with the clock mark `seen` (ms). Write a new file with DEVTAB_WRITE_VECTORS=1 cargo test -p devtab-api --test contract server_vectors.",
+  "vectors": [
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1797984000,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-01 subscription paid 30 days ahead",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "due": false,
+        "kind": "active"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxNzk3OTg0MDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.yc6IeGpKsm7uNuBhBiDRkMReoJlc00BguBapOiPyO0e_Jq1JpA7xlHGRLmAzP3V2cRrjKmVttn2_jl-dDC7Xrw",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1826928000,
+        "renews": true,
+        "status": "active",
+        "term": "year"
+      },
+      "name": "case-02 annual subscription paid 365 days ahead",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "due": true,
+        "kind": "active"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxODI2OTI4MDAwLCJ0ZXJtIjoieWVhciIsInJlbmV3cyI6dHJ1ZX0.HtAwIrDkmDJsm_6U2dPk23J4Prm1RQNifXK2CdMn1CXFf7B-R1pLDDKGrfL1ZZC2RmTtQbNZqm5ObcCQrnbxYQ",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1797120000,
+        "renews": false,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-03 cancelled, paid 20 days ahead",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "due": true,
+        "kind": "active"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxNzk3MTIwMDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOmZhbHNlfQ.XEWLV9qf-AvUASVlPEl-6-PSuX5TYekCpgCGFVfaAwzVKGuNZdzE3JZCY9qxcPmeOGsmhv_oM9Qx5flY_kckww",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1796256000,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-04 paid 10 days ahead",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "due": true,
+        "kind": "active"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5Njg2MDgwMCwiZXhwIjoxNzk3NDY1NjAwLCJwYWlkIjoxNzk2MjU2MDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.QAq_2uvhoIDqITr2p6wLQc5mUmA3_CoxJFnqipf1BZ3KuEBWmUEDWpL65v2neAG1EgVIsI6wjlecXSYrj2CdmA",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1795392000,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-05 paid until today",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "grace"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NTk5NjgwMCwiZXhwIjoxNzk2NjAxNjAwLCJwYWlkIjoxNzk1MzkyMDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.AnRftrGPNButfGdLEI9iHILJz7jQv0FoZqU6F-_a8qyTjqHQNiOnaoUiytH0g6kwjZwMrIooLrQj64FRCLTC8A",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1795132800,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-06 payment 3 days overdue",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "grace"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NTk5NjgwMCwiZXhwIjoxNzk2MzQyNDAwLCJwYWlkIjoxNzk1MTMyODAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.v-AxyW8u_x_MdnoM2bxhL-9Iq2ayC2fqhCqQOrTvImnrl3KqeRMMJudU0jOsskbX0CE5ELdmdb9HUGunCv3chw",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1794700800,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-07 payment 8 days overdue",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "expired"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTkxMDQwMCwid2FybiI6MTc5NTkxMDQwMCwiZXhwIjoxNzk1OTEwNDAwLCJwYWlkIjoxNzk0NzAwODAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.ri8S-4oO-D46XLOPVv-TbcI_OoIDnhouR5f0_hADF1TJjY2sYds7TAvx74KA0BoHDosMo-wD46mt-GksWjw4uw",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1794225600,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-08 payment 13.5 days overdue",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "expired"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTQzNTIwMCwid2FybiI6MTc5NTQzNTIwMCwiZXhwIjoxNzk1NDM1MjAwLCJwYWlkIjoxNzk0MjI1NjAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.JrQH4mzY4GVyCyp_HMPSCJQKAWqNo2FxLcvENaV825oU82YmhtHquwIKnUUtrvETU-9qs929UJjnZuzcCStRmw",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1794182400,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-09 payment exactly 14 days overdue",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "ended"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJlbmRlZCIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk1MzkyMDAwLCJleHAiOjE3OTUzOTIwMDAsInBhaWQiOjE3OTQxODI0MDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6ZmFsc2V9.2iPvTjjDFdoHl3qLNKHWvpDhY14z8D6pmv8aoI-zaenV2qqCESds80qhAM22oSXxZrGrLM3ebkW0BwsmiGRgFA",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1793664000,
+        "renews": true,
+        "status": "active",
+        "term": "month"
+      },
+      "name": "case-10 payment 20 days overdue",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "ended"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJlbmRlZCIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk1MzkyMDAwLCJleHAiOjE3OTUzOTIwMDAsInBhaWQiOjE3OTM2NjQwMDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6ZmFsc2V9.AlUiRx-nH_XpGhB9F9yQqd9-cr2-uLXymjK5Ck7823Jt34z9jHb3-nf4ROEfZ9niJ3BUkO2tRk3q109MPi8XVg",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": null,
+        "status": "active"
+      },
+      "name": "case-11 complimentary without an end",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "due": false,
+        "kind": "active"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjpudWxsfQ.BLlieqHfY0XhAhx9kUJs3AGn0R82qvwrsEaPFyfs42j0u9vyYlTj0hvLGDZHLTiFaZDA8OPMt5lGdA54NqfXdw",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1795651200,
+        "status": "active"
+      },
+      "name": "case-12 complimentary until 3 days ahead",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "expired"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTY1MTIwMCwid2FybiI6MTc5NTY1MTIwMCwiZXhwIjoxNzk1NjUxMjAwLCJwYWlkIjoxNzk1NjUxMjAwLCJyZW5ld3MiOmZhbHNlfQ.4lcZ2esG2kqNLHeRGi7ZP6AaKlH5qq4Bmf_JqINWgbo5qYIknOzCvmkdmSzZpEIUvIQ0--ef6tvrJ41x8VB_jw",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1798848000,
+        "status": "active"
+      },
+      "name": "case-13 complimentary until 40 days ahead",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "due": true,
+        "kind": "active"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxNzk4ODQ4MDAwLCJyZW5ld3MiOmZhbHNlfQ.71xk_3yehhVZU05q7X05Te9Li64ryLupH_LBMw7uw4l8nnDNPCbuvWfQVAMrAMe-24ccCVa4Gla_4hRpmV3hOA",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1795305600,
+        "status": "active"
+      },
+      "name": "case-14 complimentary until yesterday",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "ended"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJlbmRlZCIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk1MzkyMDAwLCJleHAiOjE3OTUzOTIwMDAsInBhaWQiOjE3OTUzMDU2MDAsInJlbmV3cyI6ZmFsc2V9.UnZEkddiOLhopTA34G4ctxQ0i3Oi00GGMVv31xMPflduP8MDxoxSqZisfU51DhTs-V43tZYci6yUzmNtA978HQ",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1791936000,
+        "renews": false,
+        "status": "ended",
+        "term": "year"
+      },
+      "name": "case-15 subscription ended",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "ended"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJlbmRlZCIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk1MzkyMDAwLCJleHAiOjE3OTUzOTIwMDAsInBhaWQiOjE3OTE5MzYwMDAsInRlcm0iOiJ5ZWFyIiwicmVuZXdzIjpmYWxzZX0.NXDf10GmbbEDw7hn7EZP7xI0-Ilb-h5vqEHywpRmolL-V5-0oIfOnSlpapcoHQdiwYRnzlCFuSKQCE06cvx_Nw",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": 1796256000,
+        "reason": "refund",
+        "status": "revoked"
+      },
+      "name": "case-16 revoked: refund",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "revoked",
+        "reason": "refund"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJyZXZva2VkIiwicmVhc29uIjoicmVmdW5kIiwiaWF0IjoxNzk1MzkyMDAwLCJjaGsiOjE3OTUzOTIwMDAsIndhcm4iOjE3OTUzOTIwMDAsImV4cCI6MTc5NTM5MjAwMCwicGFpZCI6MTc5NjI1NjAwMH0.17vl6KDGT45HMTA6Em1QRhJ2xtLtY3yi4IGDOdPNZyUmT0896HVs0jNg7CpNxxerx5wI-QucJF129jv-3nCb-A",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": null,
+        "reason": "deactivated",
+        "status": "revoked"
+      },
+      "name": "case-16 revoked: deactivated",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "revoked",
+        "reason": "deactivated"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJyZXZva2VkIiwicmVhc29uIjoiZGVhY3RpdmF0ZWQiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTM5MjAwMCwid2FybiI6MTc5NTM5MjAwMCwiZXhwIjoxNzk1MzkyMDAwLCJwYWlkIjpudWxsfQ.MVJycSUJtK2nLf3XIdwlt1LTjHyGTitQPS2b1Tb7gr62MbdnLEAlIB55T8dx3dGlEsA4fVeOkvDowoNLv7S16Q",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": null,
+        "reason": "key-blocked",
+        "status": "revoked"
+      },
+      "name": "case-16 revoked: key-blocked",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "revoked",
+        "reason": "key-blocked"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJyZXZva2VkIiwicmVhc29uIjoia2V5LWJsb2NrZWQiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTM5MjAwMCwid2FybiI6MTc5NTM5MjAwMCwiZXhwIjoxNzk1MzkyMDAwLCJwYWlkIjpudWxsfQ.Cf7dDQO22g91of0YywhlBQoF3ZFw2L0RfxupGOyVPBvCDkX0WmJNz6Zq5Pz0qvVEovLhlcvwrtBkLfOCjr54fA",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": null,
+        "reason": "seat-limit",
+        "status": "revoked"
+      },
+      "name": "case-16 revoked: seat-limit",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "revoked",
+        "reason": "seat-limit"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJyZXZva2VkIiwicmVhc29uIjoic2VhdC1saW1pdCIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1MzkyMDAwLCJ3YXJuIjoxNzk1MzkyMDAwLCJleHAiOjE3OTUzOTIwMDAsInBhaWQiOm51bGx9.JhcwahBe8uU0ut6SjVDFLKZJIt_IbipmGeNBU2GrS56hSE5xkFl6pD0o9siWGWVHMtYPTNhledoqXa0HqvLP2Q",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "licence": {
+        "paid": null,
+        "reason": "unknown-installation",
+        "status": "revoked"
+      },
+      "name": "case-16 revoked: unknown-installation",
+      "now": 1796083200000,
+      "seen": 0,
+      "state": {
+        "kind": "revoked",
+        "reason": "unknown-installation"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJyZXZva2VkIiwicmVhc29uIjoidW5rbm93bi1pbnN0YWxsYXRpb24iLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTM5MjAwMCwid2FybiI6MTc5NTM5MjAwMCwiZXhwIjoxNzk1MzkyMDAwLCJwYWlkIjpudWxsfQ.tBHbTkqwyXGBaaVcezp-vI9BhPIibTOE-ia1s1hlUudl7Df3p9SmLWeUVE-kLHO2PCtokb5-R937FW0dmkB5cA",
+      "verify": "ok"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "name": "broken: one bit of the signature flipped",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "kind": "invalid",
+        "reason": "signature"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxNzk3OTg0MDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.yc6IeGpKsm7uNuBhBiDRkMReoJlc00BguBapOiPyO0e_Jq1JpA7xlHGRLmAzP3V2cRrjKmVttn2_jl-dDC7Xrg",
+      "verify": "signature"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "name": "broken: a key id no build knows",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "kind": "invalid",
+        "reason": "unknown-key"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtMDAwMDAwMDAiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxNzk3OTg0MDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.yc6IeGpKsm7uNuBhBiDRkMReoJlc00BguBapOiPyO0e_Jq1JpA7xlHGRLmAzP3V2cRrjKmVttn2_jl-dDC7Xrw",
+      "verify": "unknown-key"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "name": "broken: alg none without a signature",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "kind": "invalid",
+        "reason": "unsupported"
+      },
+      "token": "eyJhbGciOiJub25lIiwia2lkIjoidGVzdC1iYTQ3MWM1ZSIsInR5cCI6ImRldnRhYi1saWNlbmNlIn0.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxNzk3OTg0MDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.",
+      "verify": "unsupported"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "name": "broken: a 70-byte signature",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "kind": "invalid",
+        "reason": "malformed"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDAwMDAwMDAwMDAwMDAwMDAwMDAwMFRFU1QiLCJpbnN0IjoicTNWMm1aMGJURVNUMDAwMDAwMDAwMCIsInBsYW4iOiJwcm8iLCJzdGF0dXMiOiJhY3RpdmUiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTk5NjgwMCwid2FybiI6MTc5NzM3OTIwMCwiZXhwIjoxNzk3OTg0MDAwLCJwYWlkIjoxNzk3OTg0MDAwLCJ0ZXJtIjoibW9udGgiLCJyZW5ld3MiOnRydWV9.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw",
+      "verify": "malformed"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "name": "broken: a signed payload that is JSON but not an object",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "kind": "invalid",
+        "reason": "malformed"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.WzFd.bcUQ5XpbjGoWwLRTx7K8uF0sms7VpILtGjvhkv6lqgHTg6mapsxwI0lKLkh_7gZlithKx0wKmmYZkqzsstcs9Q",
+      "verify": "malformed"
+    },
+    {
+      "inst": "q3V2mZ0bTEST0000000000",
+      "name": "broken: a signed payload that is not UTF-8",
+      "now": 1795478400000,
+      "seen": 0,
+      "state": {
+        "kind": "invalid",
+        "reason": "malformed"
+      },
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtYmE0NzFjNWUiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.__57.TmrCeqk6NblsaJAC1-8lUur8YaJLaHQreNnAPgEKAQDLS63QNbKcsEaF_1prMifpgT9MXluGNljwj7cAKZHQ8w",
+      "verify": "malformed"
+    }
+  ]
+}

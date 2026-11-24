@@ -1,0 +1,109 @@
+{
+  "note": "DEVTAB_LICENCE_TEST. Test vectors of the licence token: a public key made for one run of packages/licence/scripts/vectors.mjs (its private key was never stored) and tokens signed with it. Not a key or a token of the product. `verify` is the outcome of verifyToken against `keys` (\"ok\" or the reason); `state` is what evaluate gives for the record { inst, token } at `now` with the clock mark `seen` (ms).",
+  "keys": [
+    {
+      "kid": "test-926bc319",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "Sy328w-7815wCPbmf_Kbdn9YiDL28A9jh9h9QBuLR_E",
+        "y": "3IzJ7FY6ReaOvHBLfkRzPCuwJd4Ns_uEuXSEnCsADMQ"
+      }
+    }
+  ],
+  "vectors": [
+    {
+      "name": "active",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtOTI2YmMzMTkiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6ImFjdGl2ZSIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk3Mzc5MjAwLCJleHAiOjE3OTc5ODQwMDAsInBhaWQiOjE3OTc5ODQwMDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6dHJ1ZX0.q5cQCkTWfWW6_hHAhAseaPmDR-1RijnVG_YbnluxRHi8Yc2YpHUb4V8yrbGwv1Xh1TG7ZIDVasebzeXNoAAO0w",
+      "now": 1795478400000,
+      "seen": 0,
+      "verify": "ok",
+      "state": {
+        "kind": "active",
+        "due": false
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    },
+    {
+      "name": "grace",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtOTI2YmMzMTkiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6ImFjdGl2ZSIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk3Mzc5MjAwLCJleHAiOjE3OTc5ODQwMDAsInBhaWQiOjE3OTc5ODQwMDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6dHJ1ZX0.q5cQCkTWfWW6_hHAhAseaPmDR-1RijnVG_YbnluxRHi8Yc2YpHUb4V8yrbGwv1Xh1TG7ZIDVasebzeXNoAAO0w",
+      "now": 1797552000000,
+      "seen": 0,
+      "verify": "ok",
+      "state": {
+        "kind": "grace"
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    },
+    {
+      "name": "expired (the clock put back after the window: counted by the mark)",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtOTI2YmMzMTkiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6ImFjdGl2ZSIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk3Mzc5MjAwLCJleHAiOjE3OTc5ODQwMDAsInBhaWQiOjE3OTc5ODQwMDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6dHJ1ZX0.q5cQCkTWfWW6_hHAhAseaPmDR-1RijnVG_YbnluxRHi8Yc2YpHUb4V8yrbGwv1Xh1TG7ZIDVasebzeXNoAAO0w",
+      "now": 1796256000000,
+      "seen": 1798070400000,
+      "verify": "ok",
+      "state": {
+        "kind": "expired"
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    },
+    {
+      "name": "ended",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtOTI2YmMzMTkiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6ImVuZGVkIiwiaWF0IjoxNzk1MzkyMDAwLCJjaGsiOjE3OTU5OTY4MDAsIndhcm4iOjE3OTUzOTIwMDAsImV4cCI6MTc5NTM5MjAwMCwicGFpZCI6MTc5NDE4MjQwMCwidGVybSI6InllYXIiLCJyZW5ld3MiOmZhbHNlfQ.RnlAv3zp1n5yIRCFbpAPAtjhNPXznuSLXQ0x7BSykktUkhgwJ8QvzHDo6aRMkeuCU_VsbzP1y2KlQA4hxTay6w",
+      "now": 1795478400000,
+      "seen": 0,
+      "verify": "ok",
+      "state": {
+        "kind": "ended"
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    },
+    {
+      "name": "revoked",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtOTI2YmMzMTkiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6InJldm9rZWQiLCJyZWFzb24iOiJyZWZ1bmQiLCJpYXQiOjE3OTUzOTIwMDAsImNoayI6MTc5NTM5MjAwMCwid2FybiI6MTc5NTM5MjAwMCwiZXhwIjoxNzk1MzkyMDAwLCJwYWlkIjpudWxsfQ.6UH8Uil8BLLiECSNhfp9T-sykggapozbumrMuwXRWbVitjw-088NbSAEJWCJESlibJJil_vS8zfSRSi12IX0Mg",
+      "now": 1795478400000,
+      "seen": 0,
+      "verify": "ok",
+      "state": {
+        "kind": "revoked",
+        "reason": "refund"
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    },
+    {
+      "name": "a changed signature",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtOTI2YmMzMTkiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6ImFjdGl2ZSIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk3Mzc5MjAwLCJleHAiOjE3OTc5ODQwMDAsInBhaWQiOjE3OTc5ODQwMDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6dHJ1ZX0.q5cQCkTWfWW6_hHAhAseaPmDR-1RijnVG_YbnluxRHi8Yc2YpHUb4V8yrbGwv1Xh1TG7ZIDVasebzeXNoAAO0g",
+      "now": 1795478400000,
+      "seen": 0,
+      "verify": "signature",
+      "state": {
+        "kind": "invalid",
+        "reason": "signature"
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    },
+    {
+      "name": "a key id the build does not know",
+      "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6InRlc3QtOTI2YmMzMTktdW5saXN0ZWQiLCJ0eXAiOiJkZXZ0YWItbGljZW5jZSJ9.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6ImFjdGl2ZSIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk3Mzc5MjAwLCJleHAiOjE3OTc5ODQwMDAsInBhaWQiOjE3OTc5ODQwMDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6dHJ1ZX0.ekBDJOe94kmX6vZQtJnPZhjolu8YdiW3LXsKN9N7ssaqKy9x9TcNRPkYXsnfKyTWaaY0zEbogQUhhG-a5V73-g",
+      "now": 1795478400000,
+      "seen": 0,
+      "verify": "unknown-key",
+      "state": {
+        "kind": "invalid",
+        "reason": "unknown-key"
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    },
+    {
+      "name": "alg: none without a signature",
+      "token": "eyJhbGciOiJub25lIiwia2lkIjoidGVzdC05MjZiYzMxOSIsInR5cCI6ImRldnRhYi1saWNlbmNlIn0.eyJ2IjoxLCJsaWQiOiJsaWNfMDFKRDVRWDdZMlo5VEVTVCIsImluc3QiOiJxM1YybVowYlRFU1QwMDAwMDAwMDAwIiwicGxhbiI6InBybyIsInN0YXR1cyI6ImFjdGl2ZSIsImlhdCI6MTc5NTM5MjAwMCwiY2hrIjoxNzk1OTk2ODAwLCJ3YXJuIjoxNzk3Mzc5MjAwLCJleHAiOjE3OTc5ODQwMDAsInBhaWQiOjE3OTc5ODQwMDAsInRlcm0iOiJtb250aCIsInJlbmV3cyI6dHJ1ZX0.",
+      "now": 1795478400000,
+      "seen": 0,
+      "verify": "unsupported",
+      "state": {
+        "kind": "invalid",
+        "reason": "unsupported"
+      },
+      "inst": "q3V2mZ0bTEST0000000000"
+    }
+  ]
+}

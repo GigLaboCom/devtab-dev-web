@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+#
+# The extension's side of the licence contract, copied into
+# contract/licence-v1/ byte for byte, with the checksums of the copies in
+# contract/licence-v1/SOURCES.sha256. Nothing is imported from the
+# extension's repository at build or test time: these copies are all there
+# is, refreshed by hand with this script.
+#
+#   script/contract-sync <path to a clone of the extension>   copy and record
+#   DEVTAB_EXTENSION_DIR=<path> script/contract-sync          the same
+#   script/contract-sync --check                              compare the copies with the record
+#
+# What is copied:
+#   packages/licence/lib/{verify,state,base64url,types}.ts -> verifier/   the extension's token check and states
+#   packages/licence/testdata/vectors.json -> extension-vectors.json      tokens the extension signed
+#   scripts/mock-backend/contract.mjs -> verifier/contract.mjs           the contract's rules as code (issuing
+#                                                                         rules, error table, field rules)
+# The package's modules import each other without file extensions; the
+# contract test resolves those with a hook of Node's own (node:module), so
+# the copies stay byte for byte what the extension has.
+
+set -euo pipefail
+
+root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+dir="$root/contract/licence-v1"
+record="$dir/SOURCES.sha256"
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
+
+# source in the extension's clone : copy in contract/licence-v1
+files=(
+  "packages/licence/lib/verify.ts:verifier/verify.ts"
+  "packages/licence/lib/state.ts:verifier/state.ts"
+  "packages/licence/lib/base64url.ts:verifier/base64url.ts"
+  "packages/licence/lib/types.ts:verifier/types.ts"
+  "packages/licence/testdata/vectors.json:extension-vectors.json"
+  "scripts/mock-backend/contract.mjs:verifier/contract.mjs"
+)
+
+check() {
+  local listed status=0
+  if [[ ! -s "$record" ]]; then
+    echo "contract-sync: $record is missing; run script/contract-sync <extension clone>" >&2
+    exit 1
+  fi
+  if ! (cd "$dir" && sha256 -c --status "$record" 2>/dev/null); then
+    (cd "$dir" && sha256 -c "$record" 2>&1 | grep -v ': OK$' >&2) || true
+    status=1
+  fi
+  # Every copy is recorded: nothing in verifier/ or extension-vectors.json
+  # without a checksum.
+  listed="$(awk '{print $2}' "$record")"
+  while IFS= read -r copy; do
+    if ! grep -qxF "$copy" <<<"$listed"; then
+      echo "contract-sync: $copy is not in SOURCES.sha256" >&2
+      status=1
+    fi
+  done < <(cd "$dir" && { find verifier -type f 2>/dev/null; [[ -f extension-vectors.json ]] && echo extension-vectors.json; } | sort)
+  if [[ $status -ne 0 ]]; then
+    echo "contract-sync: the copies differ from SOURCES.sha256; run script/contract-sync <extension clone>" >&2
+    exit 1
+  fi
+  echo "contract-sync: the copies match SOURCES.sha256"
+}
+
+copy() {
+  local clone="$1" entry source target copied=()
+  for entry in "${files[@]}"; do
+    if [[ ! -f "$clone/${entry%%:*}" ]]; then
+      echo "contract-sync: ${entry%%:*} is missing in $clone; is it a clone of the extension?" >&2
+      exit 1
+    fi
+  done
+  rm -rf "$dir/verifier" "$dir/extension-vectors.json"
+  mkdir -p "$dir/verifier"
+  for entry in "${files[@]}"; do
+    IFS=: read -r source target <<<"$entry"
+    cp "$clone/$source" "$dir/$target"
+    chmod 644 "$dir/$target"
+    copied+=("$target")
+    echo "copied $source -> contract/licence-v1/$target"
+  done
+  (cd "$dir" && sha256 "${copied[@]}" | LC_ALL=C sort -k2 >"$record")
+  echo "wrote contract/licence-v1/SOURCES.sha256"
+}
+
+case "${1:-}" in
+  --check) check ;;
+  -h | --help) sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//' ;;
+  "")
+    if [[ -n "${DEVTAB_EXTENSION_DIR:-}" ]]; then
+      copy "$DEVTAB_EXTENSION_DIR"
+    else
+      sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//' >&2
+      exit 1
+    fi
+    ;;
+  *) copy "$1" ;;
+esac

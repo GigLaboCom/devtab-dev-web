@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "POST /v1/refresh: the body of a 200 answer",
+  "description": "Always a signed state: active, ended or revoked (token.claims.schema.json).",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    }
+  },
+  "required": [
+    "token"
+  ],
+  "additionalProperties": false
+}
