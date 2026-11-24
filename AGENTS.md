@@ -24,9 +24,11 @@ script/db-up          # the local Supabase Postgres alone, migrations applied
 script/db-migrate     # the migrations it does not have yet
 script/api-dev        # the API on :8080 and 127.0.0.1:8081, signing with a local test key
 script/sqlx-prepare   # .sqlx/ from the local database, after changing a query or a migration
-pnpm test:contract    # the licence contract on the extension's side
-script/check-all      # pnpm check + pnpm test:contract + script/api-check: before every
-                      # commit touching api/, supabase/, config/, contract/ or .sqlx/
+script/gen            # contract/internal-openapi.json and src/lib/api/schema.gen.ts from the
+                      # API's code, after changing an internal route or its bodies
+pnpm test:contract    # the licence and plans contracts on the extension's side
+script/check-all      # pnpm check + script/gen --check + pnpm test:contract + script/api-check:
+                      # before every commit touching api/, supabase/, config/, contract/ or .sqlx/
 ```
 
 ## Language
@@ -73,9 +75,21 @@ any default attribution a tool adds:
   outside the repository).
 - Nothing from the sibling repositories: this site imports nothing from them.
   The one exception is the byte copies of the extension's side of the
-  licence contract in `contract/licence-v1/verifier/` (and its vectors),
-  which only `script/contract-sync` writes, with their checksums; never edit
-  them by hand.
+  contracts in `contract/licence-v1/verifier/` (and its vectors) and
+  `contract/plans-v1/reader/`, which only `script/contract-sync` writes, with
+  their checksums; never edit them by hand.
+
+## Generated files
+
+- `contract/internal-openapi.json` and `src/lib/api/schema.gen.ts` are written
+  only by `script/gen`, from the `utoipa` annotations of the API's code;
+  never edit them by hand. Commit them with the change that moved them;
+  `script/gen --check` (in `script/check-all` and CI) fails when they are not
+  what the code gives. Prettier, ESLint and Tailwind skip the generated
+  TypeScript; the type check reads it.
+- `contract/licence-v1/server-vectors.json` and
+  `contract/plans-v1/server-catalogs.json` are written by their tests with
+  `DEVTAB_WRITE_VECTORS=1` (README.md, "Backend").
 
 ## Dependencies
 
@@ -115,6 +129,13 @@ any default attribution a tool adds:
   address.
 - Every change made through `devtab-api admin` writes an `app.admin_audit`
   row in the same transaction, with no personal data in it.
+- The plans' texts and prices are data, not code: `config/plans.toml`, synced
+  by `admin plans sync`. The owner decides the wording and the prices; never
+  invent either. No real price anywhere: amounts come from the payment
+  provider by its price id, and the only prices in the repository are the
+  fake provider's, in XTS, the test code of ISO 4217, which only `dev`
+  serves. What is particular to a provider lives in `api/src/payments/`
+  only.
 - The database and the users are Supabase's: Postgres and Supabase Auth.
   Locally that is the Supabase CLI's stack (`supabase/config.toml`); the
   scripts start Postgres alone until sign-in needs more.

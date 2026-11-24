@@ -75,6 +75,7 @@ src/i18n/validate.ts      the catalogue check (the build and the tests)
 src/i18n/index.ts         messages(locale), the routes of a localised page
 src/lib/pages.ts          every localised page, by id and path
 src/lib/site.ts           the site's address
+src/lib/api/schema.gen.ts the internal API's types, written by script/gen (no page uses them yet)
 src/layouts/              <html lang>, title, canonical URL, alternates
 src/components/           the header and the language switch
 src/pages/[...locale]/    the localised pages
@@ -145,10 +146,11 @@ for another address; run the tests with the same `SITE_URL`.
 
 `devtab-api` is the site's backend: one Rust binary (axum, tokio, sqlx) with
 two listeners. The public one (`:8080`) answers `/api/healthz`,
-`/api/readyz` and the extension's licence endpoints, `POST /v1/activate`,
-`/v1/refresh` and `/v1/deactivate`; the internal one (`127.0.0.1:8081` in
-development) answers `/internal/healthz` and is meant only for the site's own
-pages, never published. It reads its configuration from `DEVTAB_*` variables
+`/api/readyz` and the extension's endpoints: the licence's `POST /v1/activate`,
+`/v1/refresh` and `/v1/deactivate`, and the plans' catalogue, `GET /v1/plans`;
+the internal one (`127.0.0.1:8081` in development) answers `/internal/healthz`
+and `/internal/plans` and is meant only for the site's own pages, never
+published. It reads its configuration from `DEVTAB_*` variables
 and keeps its data in Postgres 17, schema `app`, as the role `devtab_api`.
 The site does not call it yet, and the site's build does not change because
 of it.
@@ -200,6 +202,76 @@ and the signed token the server returns.
   private key with mode 600. `staging` and `prod` refuse that setting and
   any `test-` key. Tests make their keys in memory.
 
+### Plans
+
+The plans' catalogue is data: `config/plans.toml` holds the plans (id, kind,
+billing period, seats, order, whether available, the end of a limited offer),
+the texts of each plan's card (English required, Russian optional) and each
+plan's prices as a provider and its price id. `devtab-api admin plans sync`
+makes `app.plans`, `app.plan_texts` and `app.plan_prices` what the file says
+for the plans it lists, and writes the catalogue's version (`<date>.<n>`) into
+`app.settings`:
+
+- It holds every text to the extension's rules, so that the server never
+  sends what the extension would skip: lengths in Unicode code points after
+  trimming (name 1–32, summary 140, 0–8 lines of what a plan includes of
+  1–100 each, price note 60, badge 24), no control or text-direction
+  characters, at most six available plans (counting those not in the file),
+  English texts for every plan, and an answer within 32 KB.
+- Amounts are never typed in: the sync reads each price's amount and currency
+  from its provider by the price id (`PaymentProvider::price`,
+  `api/src/payments/`) and stores them. The only provider so far is `fake`,
+  for development and tests, whose prices the file states next to their ids.
+  A real provider's adapter, answering over HTTP with its own price ids, comes
+  with the purchase; the endpoints only read the stored rows.
+- A real price uses a currency code of ISO 4217 that browsers know
+  (`api/src/plans/currency.rs`); XTS, the code ISO 4217 reserves for tests,
+  belongs to the fake provider alone and is served only in `dev`, as only the
+  extension's test and development builds accept it. `DEVTAB_PAYMENTS=fake`
+  is refused in `prod`; in `staging` its prices are not served, so no paid plan
+  is offered.
+- It prints the changes and asks first; texts of a language the file no longer
+  has are deleted, prices it no longer has are deactivated (kept for the
+  purchases that will refer to them). One `app.admin_audit` row per applied
+  sync.
+
+`GET /v1/plans` answers the catalogue in the format the extension reads (its
+plan model, format `v` 1): the version, `maxAge` (`DEVTAB_PLANS_MAX_AGE`), the
+site's manage address, and at most six plans in the order of their cards —
+those that are available, whose offer has not ended and that can be sold now
+(a paid plan needs an active price of the provider `DEVTAB_PAYMENTS` names, in
+a currency this environment serves). English texts only; nothing about the
+person asking, no seats. Any origin may read it (`Access-Control-Allow-Origin:
+*`, never credentials, errors included; a preflight gets 204); it carries
+`Cache-Control: no-cache` and an `ETag`, and answers 304 to a matching
+`If-None-Match`. It answers only on `DEVTAB_LICENCE_HOST`, closes for
+maintenance like the other `/v1/*`, and allows 60 requests a minute per client
+address (`DEVTAB_RATE_PLANS_PER_IP`). With nothing available, its list is
+empty: the extension reads that as no usable answer (`empty`) and keeps the
+list it had.
+
+`GET /internal/plans?locale=en|ru` answers the same for the site's pages, with
+the texts of that language (English where a plan has none, as each plan's
+`locale` says), every plan whose offer has not ended, and whether each can be
+bought now (`available`).
+
+What `config/plans.toml` holds now: Free, Monthly and Annually (`free`,
+`pro-monthly`, `pro-annual`, three seats each) with the placeholder texts of
+the extension's plans specification, the fake provider's prices XTS 11.11 and
+XTS 111.10, and no plan available: their final wording and prices are not
+decided, so `GET /v1/plans` answers an empty list.
+
+### The internal API's types
+
+The internal listener's routes and their bodies are described with `utoipa`
+in the Rust code. `script/gen` writes that description,
+`contract/internal-openapi.json` (`devtab-api openapi`), and the site's types
+from it, `src/lib/api/schema.gen.ts` (`openapi-typescript`, a development
+dependency of the site); both are committed and written by nothing else.
+`script/gen --check`, in `script/check-all` and CI, fails when either is not
+what the code gives. No page uses the types yet; the site's checks accept the
+file, Prettier, ESLint and Tailwind skip it, and the build does not change.
+
 ### The contract with the extension
 
 `contract/licence-v1/` is the machine-readable contract of the licence
@@ -230,7 +302,26 @@ checksums (`script/contract-sync --check` checks only the last). The
 extension's modules import each other without file extensions; the test
 resolves those with Node's own resolve hook (`node:module`), so the copies
 stay as they are and no dependency is added. `cargo test --test contract`
-runs the extension's vectors through the server's check.
+runs the extension's vectors through the server's check. The token's `term`
+and `renews` (a subscription's billing period and whether it renews) are among
+the issued claims the vectors cover.
+
+`contract/plans-v1/` is the contract of `GET /v1/plans`: the JSON Schema of
+its answer, `server-catalogs.json` (answers this server builds from the
+fixture catalogue `api/tests/fixtures/plans/three-plans.toml` and from
+`config/plans.toml`, each with what the extension must make of it), and in
+`reader/` byte copies of the extension's catalogue reader
+(`extension/src/plans/{model,price}.ts`, `extension/src/shared/plansRecord.ts`),
+which `script/contract-sync` copies with their checksums.
+`pnpm test:contract` runs every answer through the extension's own
+`parseCatalog`: a test or development build keeps every plan and drops none,
+a production build drops the plans priced in XTS; the contract's
+`catalogCheck` finds nothing the server should not have sent, and each answer
+is within 32 KB. The reader uses TypeScript that Node's type stripping alone
+does not take; the test's hooks (`node:module`) turn those copies into
+JavaScript with Node's own `stripTypeScriptTypes`. After a change to the catalogue's format,
+`DEVTAB_WRITE_VECTORS=1 cargo test -p devtab-api --test plans server_catalogs`
+writes `server-catalogs.json` again.
 
 ### Requirements
 
@@ -258,10 +349,11 @@ runs the extension's vectors through the server's check.
 | `script/db-reset`             | Recreates the local database and applies every migration from zero                              |
 | `script/api-dev`              | Runs the API against the local database as `devtab_api`, signing with a local test key          |
 | `script/sqlx-prepare`         | Writes the queries' offline data, `.sqlx/`, from the local database (`--check` compares)        |
-| `script/contract-sync <path>` | Copies the extension's side of the contract into `contract/licence-v1/` (`--check` compares)    |
-| `pnpm test:contract`          | The contract test on the extension's side: the backend's tokens through the copied check        |
+| `script/contract-sync <path>` | Copies the extension's side of the contracts into `contract/*-v1/` (`--check` compares)         |
+| `script/gen`                  | Writes `contract/internal-openapi.json` and `src/lib/api/schema.gen.ts` (`--check` compares)    |
+| `pnpm test:contract`          | The contract tests on the extension's side: tokens and catalogues through the copied modules    |
 | `script/api-check`            | fmt, clippy with `-D warnings`, the tests (with the database), the `.sqlx/` check, `cargo deny` |
-| `script/check-all`            | `pnpm check`, `pnpm test:contract`, then `script/api-check`: what CI checks, before a commit    |
+| `script/check-all`            | `pnpm check`, `script/gen --check`, `pnpm test:contract`, `script/api-check`: what CI checks    |
 
 ```bash
 script/db-up
@@ -280,7 +372,7 @@ anew.
 `DEVTAB_PUBLIC_ADDR`, `DEVTAB_INTERNAL_ADDR` move the listeners (for example
 when 8080 or 8081 is taken); `devtab-api healthcheck` reads the same
 `DEVTAB_PUBLIC_ADDR`. The database tests (`api/tests/db.rs`, `v1.rs`,
-`admin.rs`, `jobs.rs`) run when `DEVTAB_TEST_DATABASE_URL` names a database
+`admin.rs`, `jobs.rs`, `plans.rs`) run when `DEVTAB_TEST_DATABASE_URL` names a database
 with the migrations applied; `script/api-check` points it at the local one,
 plain `cargo test` skips them with a note. They act as the API role and
 remove what they create.
@@ -322,9 +414,12 @@ transaction; keys are printed once and never stored.
 | `licence rotate-key <lid>`                                                     | A new key, printed once; installations activated with the old one keep working                                         |
 | `user block <e-mail>`, `user unblock <e-mail>`                                 | `app.users.status`; licences are not touched                                                                           |
 | `installation release <id>`                                                    | Frees a seat; that installation's next check gets `revoked: deactivated`                                               |
-| `plans sync [--file config/plans.toml] [--yes]`                                | Creates or updates the plans' rows (not texts or prices yet); asks first                                               |
+| `plans sync [--file config/plans.toml] [--yes]`                                | Makes the catalogue the file's: plans, texts, prices read from the provider; prints the changes, asks first            |
 | `keys generate --kid <p1, p2, …> --out <file>`, `keys generate --test --out …` | An ES256 key pair: the private key into a new file, the public entry printed (`--list-out <file>`: also as a key list) |
 | `keys check`                                                                   | The server's key against the trusted keys, as `serve` checks it                                                        |
+
+`devtab-api openapi` prints the internal listener's OpenAPI document (what
+`script/gen` writes); it needs neither the database nor any setting.
 
 `serve --emergency-key` signs with a key whose `sign_from` has not come yet,
 for the day the signing key leaks and the waiting key takes over; it is
@@ -349,7 +444,8 @@ edited or deleted. Every object a migration creates in `app` gets row level
 security, and nothing in `app` is granted to the Data API's roles. So far:
 the schema and the API role; `app.users` with its trigger on `auth.users` and
 the two lookups by e-mail address; `app.plans`; licences, installations,
-customers, the job queue and the admin record.
+customers, the job queue and the admin record; the plans' texts and prices and
+`app.settings` (the catalogue's version).
 
 ### Configuration
 
@@ -378,6 +474,10 @@ customers, the job queue and the admin record.
 | `DEVTAB_RATE_REFRESH_PER_IP`              | `60`                                                 | requests an hour, by client address                           |
 | `DEVTAB_RATE_REFRESH_PER_INSTALLATION`    | `6`                                                  | requests an hour, by licence and installation                 |
 | `DEVTAB_RATE_DEACTIVATE_PER_INSTALLATION` | `10`                                                 | requests an hour, by licence and installation                 |
+| `DEVTAB_RATE_PLANS_PER_IP`                | `60`                                                 | `GET /v1/plans`: requests a minute, by client address         |
+| `DEVTAB_SITE_URL`                         | `https://web.example.invalid` in `dev`               | required outside `dev`: `https://<host>`, checkout, manage    |
+| `DEVTAB_PAYMENTS`                         | `fake` in `dev`; none otherwise                      | provider whose prices are served; `fake` refused in `prod`    |
+| `DEVTAB_PLANS_MAX_AGE`                    | `86400`                                              | `maxAge` of `GET /v1/plans`, 3600 to 604800 seconds           |
 
 Logs are compact lines in `dev` and JSON lines in `staging` and `prod`. They
 carry a licence id and the first four characters of an installation id;
@@ -394,20 +494,26 @@ clippy.toml, deny.toml    clippy thresholds; licences, advisories and sources of
 api/src/main.rs           the binary: serve, admin, healthcheck, version
 api/src/config.rs         DEVTAB_* configuration, every problem reported at once
 api/src/clock.rs          the time decisions depend on, movable in tests
-api/src/http/             routers, middleware, the error shape, /v1/*, CORS, rate limits, health checks
+api/src/http/             routers, middleware, the error shape, /v1/*, the plans, the internal listener and its
+                          OpenAPI description, CORS, rate limits, health checks
 api/src/licence/          keys, secrets, the token and its signing, activation, refresh, seats
+api/src/plans/            the plans file, its sync, currencies, the catalogue the endpoints answer
+api/src/payments/         the payment provider's interface and the fake provider
 api/src/store/            the Postgres pool and the queries, a module for each of the tables
 api/src/jobs/             the scheduler and its task under an advisory lock
 api/src/admin.rs          the admin commands
-api/tests/                HTTP, database, /v1/*, admin, scheduler, start-up and contract tests
+api/tests/                HTTP, database, /v1/*, plans, admin, scheduler, start-up and contract tests;
+                          fixtures/plans/ (a test catalogue)
 .sqlx/                    the queries' offline data (script/sqlx-prepare)
-config/                   signing-keys.json (published public keys), plans.toml
+config/                   signing-keys.json (published public keys), plans.toml (the plans' catalogue)
 contract/licence-v1/      the licence contract: schemas, errors, vectors, the copied verifier, its test
+contract/plans-v1/        the plans contract: the answer's schema, server catalogues, the copied reader, its test
+contract/internal-openapi.json  the internal listener's OpenAPI document (script/gen)
 supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
 supabase/migrations/      SQL migrations, forward only
 script/                   db-up, db-migrate, db-reset, api-dev, api-check, check-all, sqlx-prepare,
-                          contract-sync; lib/supabase.sh
-.github/workflows/ci.yml  CI: secret scan, the site and the contract test, the API
+                          contract-sync, gen; lib/supabase.sh
+.github/workflows/ci.yml  CI: secret scan, the site and the contract tests, the API and the generated files
 ```
 
 ## Licence
