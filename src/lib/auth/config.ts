@@ -22,9 +22,11 @@ export function authConfig(): AuthConfig | null {
  *
  * - `email`: a mail with a sign-in link and a one-time code;
  * - `password`: an e-mail address and a password, with signing up (the
- *   address confirmed by a mail), and a forgotten password reset by a mail.
+ *   address confirmed by a mail), and a forgotten password reset by a mail;
+ * - `google`: a Google account, through Supabase Auth's Google provider,
+ *   which the Supabase project has to enable with its own client.
  */
-export const signInMethods = ['email', 'password'] as const;
+export const signInMethods = ['email', 'password', 'google'] as const;
 export type SignInMethod = (typeof signInMethods)[number];
 
 /**

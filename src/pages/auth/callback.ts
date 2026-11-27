@@ -1,7 +1,7 @@
 /**
  * `GET /auth/callback/`: where Supabase Auth sends the browser back with a
- * PKCE `code`: from the link of a sign-in or sign-up mail, or of a password
- * reset mail (`via=recovery`). Exchanging it
+ * PKCE `code`: from the link of a sign-in or sign-up mail, of a password
+ * reset mail (`via=recovery`), or from Google (`via=google`). Exchanging it
  * (with the verifier cookie of the browser that asked) sets the session's
  * cookies; then on to `next`, or the sign-in page, which shows who is signed
  * in. A password reset goes on to /reset-password/ instead, marking this
@@ -9,7 +9,8 @@
  *
  * A link opened in another browser, used twice or expired comes back with
  * `?error=link` to the sign-in page (or the password reset page): the code
- * of the same mail still works there.
+ * of the same mail still works there. A refused or abandoned Google sign-in
+ * comes back with `?error=google`.
  */
 import type { APIRoute } from 'astro';
 import { defaultLocale, locales, type Locale } from '../../i18n/config.ts';
@@ -48,5 +49,5 @@ export const GET: APIRoute = async ({ url, locals, cookies, redirect }) => {
     if (error) logAuthError("the link's code was refused", error);
   }
   if (via === 'recovery') return redirect(authHref(locale, 'forgotPassword', next, { error: 'link' }), 303);
-  return redirect(signInHref(locale, next, 'link'), 303);
+  return redirect(signInHref(locale, next, via === 'google' ? 'google' : 'link'), 303);
 };

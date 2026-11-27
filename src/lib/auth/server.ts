@@ -61,11 +61,11 @@ export function signInHref(locale: Locale, next?: string | null, error?: string)
 }
 
 /**
- * Where Supabase Auth sends the browser back from a mail's link:
- * `/auth/callback/` with the page's language, `next`, and `via` for what
- * started it (`recovery`), so that a failure is worded for it.
+ * Where Supabase Auth sends the browser back, from a mail's link or from
+ * Google: `/auth/callback/` with the page's language, `next`, and `via` for
+ * what started it (`recovery`, `google`), so that a failure is worded for it.
  */
-export function callbackUrl(origin: string, locale: Locale, next: string | null, via?: 'recovery'): string {
+export function callbackUrl(origin: string, locale: Locale, next: string | null, via?: 'recovery' | 'google'): string {
   const callback = new URL('/auth/callback/', origin);
   callback.searchParams.set('locale', locale);
   if (next) callback.searchParams.set('next', next);

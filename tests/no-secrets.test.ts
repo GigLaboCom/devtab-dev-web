@@ -108,7 +108,7 @@ test('the sign-in methods come from DEVTAB_SIGN_IN_METHODS: the e-mail alone unl
   try {
     assert.deepEqual(methods(undefined), ['email']);
     assert.deepEqual(methods(' '), ['email']);
-    assert.deepEqual(methods(' Password ,email'), ['password', 'email']);
+    assert.deepEqual(methods('google, Password ,email'), ['google', 'password', 'email']);
     assert.deepEqual(methods('password,sms'), ['password'], 'an unknown name is ignored');
     assert.deepEqual(methods('sms'), [], 'nothing known: no method');
   } finally {

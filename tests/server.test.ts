@@ -201,7 +201,7 @@ before(async () => {
   });
   apiBase = `http://127.0.0.1:${await listen(api)}`;
   // Every method on: every page of signing in exists.
-  base = await startSite('email,password');
+  base = await startSite('email,password,google');
 });
 
 after(() => {
@@ -484,15 +484,17 @@ async function page(path: string, cookie = '', at = base) {
 const hrefs = (html: string) => tags(html, 'a').map(link => link.get('href') ?? '');
 const actions = (html: string) => tags(html, 'form').map(form => form.get('action') ?? '');
 
-test('with every method on, the sign-in page offers a password and the e-mail, and links the other pages', async () => {
+test('with every method on, the sign-in page offers Google, a password and the e-mail, and links the other pages', async () => {
   for (const locale of locales) {
     const t = catalogues[locale].pages.signIn;
     const next = pathOf(locale, 'pro/');
     const { html, text: words } = await page(`${pathOf(locale, 'sign-in/')}?next=${encodeURIComponent(next)}`);
+    const query = new URLSearchParams({ locale, next });
+    assert.ok(hrefs(html).includes(`/auth/google/?${query}`), `${locale}: the Google link`);
     assert.deepEqual(actions(html), ['/auth/password/', '/auth/sign-in/'], locale);
     assert.ok(hrefs(html).includes(`${pathOf(locale, 'forgot-password/')}?next=${encodeURIComponent(next)}`));
     assert.ok(hrefs(html).includes(`${pathOf(locale, 'sign-up/')}?next=${encodeURIComponent(next)}`));
-    for (const phrase of [t.passwordLabel, t.forgot, t.intro, t.noAccount]) {
+    for (const phrase of [t.google, t.passwordLabel, t.forgot, t.intro, t.noAccount]) {
       assert.ok(words.includes(phrase), `${locale}: ${phrase}`);
     }
     // The page's own error words, and none it does not know.
@@ -678,6 +680,43 @@ test("a reset mail's link comes back through the callback to the new password, a
 
   const elsewhere = await page(`/auth/callback/?code=${stubAuth.goodCode}&locale=ru&via=recovery`);
   assert.equal(elsewhere.location, '/ru/forgot-password/?error=link', 'no verifier in another browser');
+  const google = await page('/auth/callback/?error=access_denied&locale=en&next=%2Fpro%2F&via=google');
+  assert.equal(google.location, '/sign-in/?next=%2Fpro%2F&error=google');
+});
+
+test('Google starts at Supabase Auth with a PKCE verifier in this browser, only from the site itself', async () => {
+  const start = (query: string, site?: string, from = '198.51.100.10') =>
+    fetch(`${base}/auth/google/?${query}`, {
+      headers: { 'x-forwarded-for': from, ...(site ? { 'sec-fetch-site': site } : {}) },
+      redirect: 'manual',
+    });
+  const response = await start('locale=ru&next=%2Fru%2Fpro%2F', 'same-origin');
+  assert.equal(response.status, 303);
+  const location = new URL(response.headers.get('location') ?? '');
+  assert.equal(`${location.origin}${location.pathname}`, `${apiBase}/auth/v1/authorize`);
+  assert.equal(location.searchParams.get('provider'), 'google');
+  assert.equal(
+    location.searchParams.get('redirect_to'),
+    `${base}/auth/callback/?locale=ru&next=%2Fru%2Fpro%2F&via=google`,
+  );
+  assert.ok(location.searchParams.get('code_challenge'));
+  assert.equal(location.searchParams.get('skip_http_redirect'), null);
+  const verifier = response.headers.getSetCookie().find(c => /^sb-[^=]+-auth-token-code-verifier=/.test(c));
+  assert.ok(verifier && /HttpOnly/i.test(verifier), 'the verifier stays in this browser');
+
+  const away = await start('locale=en&next=%2F%2Felsewhere.example.invalid%2F');
+  assert.ok(!new URL(away.headers.get('location') ?? '').searchParams.get('redirect_to')?.includes('elsewhere'));
+  for (const site of ['cross-site', 'same-site']) {
+    const foreign = await start('locale=ru&next=%2Fru%2Fpro%2F', site);
+    assert.deepEqual(
+      [foreign.status, foreign.headers.get('location')],
+      [303, '/ru/sign-in/?next=%2Fru%2Fpro%2F'],
+      site,
+    );
+    assert.deepEqual(foreign.headers.getSetCookie(), [], `${site}: nothing started`);
+  }
+  for (let n = 0; n < LIMIT; n += 1) await start('locale=en', 'none', '198.51.100.11');
+  assert.equal((await start('locale=en', 'none', '198.51.100.11')).headers.get('location'), '/sign-in/?error=rate');
 });
 
 test('the password forms refuse other sites and count attempts with the other forms', async () => {
@@ -707,12 +746,14 @@ test('a method that is off is not offered, and its pages and endpoints are not f
   const emailOnly = await startSite();
   const signIn = await page('/sign-in/', '', emailOnly);
   assert.deepEqual(actions(signIn.html), ['/auth/sign-in/']);
-  assert.ok(!hrefs(signIn.html).some(href => /sign-up|forgot/.test(href)), 'no other method');
+  assert.ok(!hrefs(signIn.html).some(href => /google|sign-up|forgot/.test(href)), 'no other method');
   for (const path of ['/sign-up/', '/ru/forgot-password/', '/reset-password/']) {
     const { status, text: words } = await page(path, '', emailOnly);
     assert.equal(status, 404, path);
     assert.ok(words.includes(en.notFound.message), `${path}: the site's 404 page`);
   }
+  const google = await fetch(`${emailOnly}/auth/google/?locale=en`, { redirect: 'manual' });
+  assert.equal(google.status, 404);
   const password = await fetch(`${emailOnly}/auth/password/`, {
     method: 'POST',
     headers: { origin: emailOnly, 'content-type': 'application/x-www-form-urlencoded' },

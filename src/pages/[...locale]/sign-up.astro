@@ -1,13 +1,15 @@
 ---
 /**
  * /sign-up/: a new account with an address and a password (the `password`
- * method; 404 when it is off), in a form posting to `/auth/password/`.
- * Supabase Auth mails a link and a code to
+ * method; 404 when it is off), in a form posting to `/auth/password/`, and
+ * Google when it is offered. Supabase Auth mails a link and a code to
  * confirm the address; the sign-in page then asks for the code. A signed-in
  * person goes on to `next`, or the sign-in page. Personal: never cached,
  * never indexed.
  */
 import AuthCard from '../../components/auth/AuthCard.astro';
+import GoogleLink from '../../components/auth/GoogleLink.astro';
+import OrDivider from '../../components/auth/OrDivider.astro';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { localeOfParam, messages } from '../../i18n';
 import { authConfig, enabledMethods, safeNext } from '../../lib/auth/config';
@@ -48,6 +50,12 @@ const error = errors[Astro.url.searchParams.get('error') ?? ''];
     {!configured && <p>{s.unavailable}</p>}
     {configured && (
       <>
+        {methods.has('google') && (
+          <>
+            <GoogleLink locale={locale} next={next} label={s.google} />
+            <OrDivider label={s.or} />
+          </>
+        )}
         <form method="post" action="/auth/password/">
           <p class={ui.note}>{t.intro}</p>
           <input type="hidden" name="step" value="sign-up" />
