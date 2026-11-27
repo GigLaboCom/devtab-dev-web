@@ -1,0 +1,26 @@
+{{- /* The sign-in mail of Supabase Auth (supabase/config.toml), for a new and
+       a known address alike: the link, which works in the browser that asked,
+       and the one-time code, which works anywhere. Russian when the account
+       was made on a Russian page (user metadata `locale`), else English. The
+       texts await the owner, like the site's (README.md). */ -}}
+{{ if eq (print .Data.locale) "ru" -}}
+<!doctype html>
+<html lang="ru">
+  <body>
+    <h1>Вход на DevTab.Dev</h1>
+    <p><a href="{{ .ConfirmationURL }}">Войти</a></p>
+    <p>Или введите этот код на странице входа: <strong>{{ .Token }}</strong></p>
+    <p>Ссылка работает в том браузере, где вы начали вход. Ссылка и код действуют один раз и недолго. Если вы не входили, просто удалите это письмо.</p>
+  </body>
+</html>
+{{- else -}}
+<!doctype html>
+<html lang="en">
+  <body>
+    <h1>Sign in to DevTab.Dev</h1>
+    <p><a href="{{ .ConfirmationURL }}">Sign in</a></p>
+    <p>Or enter this code on the sign-in page: <strong>{{ .Token }}</strong></p>
+    <p>The link works in the browser where you started signing in. The link and the code work once and expire soon. If you didn’t ask to sign in, delete this e-mail.</p>
+  </body>
+</html>
+{{- end }}

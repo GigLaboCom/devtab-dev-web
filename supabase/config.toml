@@ -63,6 +63,11 @@ enabled = true
 site_url = "http://127.0.0.1:4321"
 additional_redirect_urls = ["http://127.0.0.1:4321/**", "http://localhost:4321/**"]
 jwt_expiry = 3600
+# Access tokens are signed with an ES256 key of this machine and checked by
+# the API against the published JWKS; the API accepts no shared HS256 secret.
+# script/lib/supabase.sh makes the key on first use in the ignored .state/
+# (the CLI refuses to start without the file); it is never committed.
+signing_keys_path = "../.state/supabase/signing-keys.json"
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
 enable_signup = true
@@ -75,7 +80,9 @@ password_requirements = ""
 # offer is the owner's decision. No client ids or secrets belong in this file.
 
 [auth.rate_limit]
-email_sent = 2
+# Mails an hour. Enough for repeated sign-in tests against this local stack;
+# a hosted project sets its own limits.
+email_sent = 30
 sms_sent = 30
 anonymous_users = 30
 token_refresh = 150
@@ -92,6 +99,17 @@ secure_password_change = false
 max_frequency = "1s"
 otp_length = 6
 otp_expiry = 3600
+
+# One mail for both: a new address (confirmation) and a known one (magic
+# link). It carries the link and the code, in the language the sign-in page
+# had when the account was made (user metadata `locale`).
+[auth.email.template.magic_link]
+subject = "{{ if eq (print .Data.locale) \"ru\" }}Вход на DevTab.Dev{{ else }}Sign in to DevTab.Dev{{ end }}"
+content_path = "./supabase/templates/sign_in.html"
+
+[auth.email.template.confirmation]
+subject = "{{ if eq (print .Data.locale) \"ru\" }}Вход на DevTab.Dev{{ else }}Sign in to DevTab.Dev{{ end }}"
+content_path = "./supabase/templates/sign_in.html"
 
 [auth.sms]
 enable_signup = false
