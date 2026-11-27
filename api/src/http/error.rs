@@ -62,9 +62,6 @@ pub enum AppError {
     /// The signed-in person has no licence that can be activated.
     #[error("You have no active licence to connect.")]
     NoLicence,
-    /// The signed-in person has more than one usable licence: name one.
-    #[error("You have more than one licence: choose which one to connect.")]
-    ChooseLicence,
     /// No payment provider is configured, or it could not start a checkout.
     #[error("payments are unavailable")]
     PaymentsUnavailable,
@@ -87,7 +84,7 @@ impl AppError {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             Self::Forbidden(_) | Self::KeyBlocked | Self::LicenceInactive => StatusCode::FORBIDDEN,
-            Self::SeatLimit | Self::PlanUnavailable | Self::ChooseLicence => StatusCode::CONFLICT,
+            Self::SeatLimit | Self::PlanUnavailable => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -110,7 +107,6 @@ impl AppError {
             Self::PlanUnavailable => "plan-unavailable",
             Self::PaymentsUnavailable => "payments-unavailable",
             Self::NoLicence => "no-licence",
-            Self::ChooseLicence => "choose-licence",
             Self::Internal(_) => "internal",
         }
     }

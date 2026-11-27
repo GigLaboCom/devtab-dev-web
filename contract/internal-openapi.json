@@ -230,7 +230,7 @@
             }
           },
           "409": {
-            "description": "`choose-licence`, or `seat-limit`",
+            "description": "`seat-limit`: every usable licence is full",
             "content": {
               "application/json": {
                 "schema": {
@@ -414,7 +414,7 @@
               "string",
               "null"
             ],
-            "description": "Which licence, when the person has more than one; their only usable\none otherwise."
+            "description": "Which licence; without it the API picks (the one this installation is\non, else the longest-running with a free seat)."
           }
         },
         "additionalProperties": false

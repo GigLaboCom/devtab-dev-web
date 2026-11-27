@@ -920,6 +920,17 @@ async fn a_plan_not_on_sale_and_no_provider_are_refused() {
 
 // ---- connecting the extension from the site ----
 
+async fn active_seats(owner: &mut PgConnection, lid: &str) -> i64 {
+    sqlx::query_scalar(
+        "select count(*) from app.installations i join app.licences l on l.id = i.licence_id
+         where l.lid = $1 and i.status = 'active'",
+    )
+    .bind(lid)
+    .fetch_one(owner)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn the_site_connects_the_signed_in_person_s_extension_without_a_key() {
     let Some(mut world) = World::new(false).await else {
@@ -999,12 +1010,21 @@ async fn the_site_connects_the_signed_in_person_s_extension_without_a_key() {
             assert!(body["secret"].as_str().unwrap().len() >= 32);
         }
     }
-    // Two licences: the site names one; someone else's is not found.
+    // Two licences: the browser already on one stays on it; a new browser goes
+    // to the longest-running; a licence can still be named; someone else's is not found.
     let (status, body) = connect(buyer_token.clone(), json!({"inst": inst})).await;
     assert_eq!(
-        (status, body["error"].as_str()),
-        (StatusCode::CONFLICT, Some("choose-licence"))
+        (status, &body["lid"]),
+        (StatusCode::OK, &json!(lids[0])),
+        "{body}"
     );
+    let (status, body) = connect(
+        buyer_token.clone(),
+        json!({"inst": "BBBBBBBBBBBBBBBBBBBBBB"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(lids.contains(&body["lid"].as_str().unwrap().to_owned()));
     let (status, body) = connect(buyer_token.clone(), json!({"inst": inst, "lid": lids[1]})).await;
     assert_eq!((status, &body["lid"]), (StatusCode::OK, &json!(lids[1])));
     let (status, _) = connect(nobody_token, json!({"inst": inst, "lid": lids[1]})).await;
@@ -1014,14 +1034,6 @@ async fn the_site_connects_the_signed_in_person_s_extension_without_a_key() {
     for _ in 0..2 {
         connect(buyer_token.clone(), json!({"inst": inst, "lid": lids[0]})).await;
     }
-    let seats: i64 = sqlx::query_scalar(
-        "select count(*) from app.installations i join app.licences l on l.id = i.licence_id
-         where l.lid = $1 and i.status = 'active'",
-    )
-    .bind(&lids[0])
-    .fetch_one(&mut world.owner)
-    .await
-    .unwrap();
-    assert_eq!(seats, 1);
+    assert_eq!(active_seats(&mut world.owner, &lids[0]).await, 1);
     world.clean().await;
 }

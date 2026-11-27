@@ -54,9 +54,10 @@ pub async fn activate(
 }
 
 /// Activates `inst` with the signed-in person's licence: `lid` when given
-/// (it must be theirs), else their one usable licence. None usable:
-/// `no-licence`; more than one and no `lid`: `choose-licence`. Then as
-/// [`activate`] from step 2.
+/// (it must be theirs); otherwise the person never chooses: the licence this
+/// installation is already active on, else the first usable one with a free
+/// seat, the longest-running first (no end before any end). None usable:
+/// `no-licence`; all full: `seat-limit`. Then as [`activate`] from step 2.
 pub async fn activate_for_user(
     state: &AppState,
     user: Uuid,
@@ -72,27 +73,53 @@ pub async fn activate_for_user(
     };
     let mut tx = state.store.pool().begin().await?;
     let mine = licences::of_user(&mut *tx, user).await?;
-    let chosen = if let Some(lid) = lid {
-        mine.iter()
+    let candidates: Vec<String> = if let Some(lid) = lid {
+        let named = mine
+            .iter()
             .find(|l| l.lid == lid)
-            .ok_or(AppError::NotFound)?
-            .lid
-            .clone()
+            .ok_or(AppError::NotFound)?;
+        vec![named.lid.clone()]
     } else {
-        let usable: Vec<&LicenceRow> = mine.iter().filter(|l| usable(l)).collect();
-        match usable.as_slice() {
-            [] => return Err(AppError::NoLicence),
-            [one] => one.lid.clone(),
-            _ => return Err(AppError::ChooseLicence),
+        let mut usable: Vec<&LicenceRow> = mine.iter().filter(|l| usable(l)).collect();
+        if usable.is_empty() {
+            return Err(AppError::NoLicence);
         }
+        let mut here = Vec::new();
+        for licence in &usable {
+            let installed = installations::find(&mut *tx, licence.id, inst).await?;
+            if installed.is_some_and(|i| i.status == "active") {
+                here.push(licence.id);
+            }
+        }
+        // Already here first; then no end, then the latest end.
+        usable.sort_by_key(|l| {
+            (
+                !here.contains(&l.id),
+                l.paid_until.is_some(),
+                std::cmp::Reverse(l.paid_until),
+            )
+        });
+        usable.into_iter().map(|l| l.lid.clone()).collect()
     };
-    let licence = licences::find_by_lid_for_update(&mut *tx, &chosen)
-        .await?
-        .filter(|l| l.user_id == Some(user))
-        .ok_or(AppError::NotFound)?;
-    let done = admit(state, &mut tx, &licence, inst).await?;
-    tx.commit().await?;
-    Ok(done)
+    let mut last = AppError::NoLicence;
+    for lid in candidates {
+        let Some(licence) = licences::find_by_lid_for_update(&mut *tx, &lid)
+            .await?
+            .filter(|l| l.user_id == Some(user))
+        else {
+            return Err(AppError::NotFound);
+        };
+        match admit(state, &mut tx, &licence, inst).await {
+            Ok(done) => {
+                tx.commit().await?;
+                return Ok(done);
+            }
+            // A full licence leaves nothing written: try the next one.
+            Err(AppError::SeatLimit) => last = AppError::SeatLimit,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(last)
 }
 
 /// Steps 2–5 of [`activate`] for a licence locked in `tx`.

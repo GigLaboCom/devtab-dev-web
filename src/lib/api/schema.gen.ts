@@ -134,8 +134,8 @@ export interface components {
             /** @description The extension's installation id: 22 base64url characters. */
             inst: string;
             /**
-             * @description Which licence, when the person has more than one; their only usable
-             *     one otherwise.
+             * @description Which licence; without it the API picks (the one this installation is
+             *     on, else the longest-running with a free seat).
              */
             lid?: string | null;
         };
@@ -464,7 +464,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description `choose-licence`, or `seat-limit` */
+            /** @description `seat-limit`: every usable licence is full */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -571,8 +571,9 @@ build names may talk to it, and no install warning), for its installation id;
 `POST /auth/connect/` (the site's pages only, a signed-in person only) asks
 `POST /internal/licences/connect` for an activation of the person's licence
 for that installation: the same seat, secret and token as `POST /v1/activate`
-with a key, the licence found by the account (their only usable one, or the
-`lid` named; `no-licence`, `choose-licence`, `seat-limit` otherwise). The page
+with a key, the licence found by the account: the one this installation is
+already on, else the longest-running usable one with a free seat (the person
+never chooses; `no-licence`, or `seat-limit` when all are full). The page
 hands the answer to the extension, which keeps it only when the token is
 signed, active, for its own installation and the licence named. The
 installation id comes from the extension, never from the address, so no other

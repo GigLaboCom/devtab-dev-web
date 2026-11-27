@@ -25,8 +25,8 @@ use crate::state::AppState;
 pub struct ConnectRequest {
     /// The extension's installation id: 22 base64url characters.
     pub inst: String,
-    /// Which licence, when the person has more than one; their only usable
-    /// one otherwise.
+    /// Which licence; without it the API picks (the one this installation is
+    /// on, else the longest-running with a free seat).
     pub lid: Option<String>,
 }
 
@@ -53,7 +53,7 @@ pub struct Connected {
         (status = 401, description = "No access token, or one that does not pass", body = ErrorBody),
         (status = 403, description = "`key-blocked` or `licence-inactive`", body = ErrorBody),
         (status = 404, description = "`no-licence`, or `not-found` for a licence that is not theirs", body = ErrorBody),
-        (status = 409, description = "`choose-licence`, or `seat-limit`", body = ErrorBody),
+        (status = 409, description = "`seat-limit`: every usable licence is full", body = ErrorBody),
     ),
 )]
 pub async fn connect(
