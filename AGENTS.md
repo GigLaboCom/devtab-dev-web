@@ -160,8 +160,12 @@ any default attribution a tool adds:
   is granted to `anon`, `authenticated` or `service_role`.
 - No command that talks to a hosted Supabase project without the owner's
   word: no `supabase login`, `supabase link`, `supabase db push`, no
-  `projects`, `secrets` or `functions deploy`. Local commands only. Which
-  sign-in providers to offer is the owner's decision; none is configured.
+  `projects`, `secrets` or `functions deploy`. Local commands only. The
+  sign-in methods are the owner's decision: a mail with a link and a code,
+  an address and a password, and Google; add no other provider without the
+  owner's word. Google's client id and secret, and the SMTP sender, are
+  Supabase's settings, read from the environment (`env(...)` and
+  `SUPABASE_AUTH_*` in `supabase/config.toml`), never written into a file.
 - The Supabase CLI runs with `SUPABASE_TELEMETRY_DISABLED=1` and
   `DO_NOT_TRACK=1` (`script/lib/supabase.sh`, CI).
 - Private keys, secrets and passwords are never in the repository, in CI or
@@ -203,8 +207,9 @@ any default attribution a tool adds:
   `tests/no-secrets.test.ts` allows (public values and a rate limit) and
   never Supabase's secret key. It reads the session only on pages marked
   `session` in `src/lib/serverPages.ts`; a cacheable page never sets a
-  cookie. Which sign-in methods to offer is the owner's decision: e-mail
-  only until then.
+  cookie. Which of the sign-in methods a deployment offers is its setting,
+  `DEVTAB_SIGN_IN_METHODS`, never a constant in the code; a method that is
+  off is not shown and its pages and endpoints answer 404.
 - The content security policy (`security.csp` in `astro.config.mjs`) stays
   `default-src 'self'`, `form-action 'self'`, `object-src 'none'`,
   `base-uri 'self'`; never add another host to it. No `style` attributes and
