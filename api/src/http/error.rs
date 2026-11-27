@@ -59,6 +59,12 @@ pub enum AppError {
     PlanUnknown,
     #[error("this plan cannot be bought now")]
     PlanUnavailable,
+    /// The signed-in person has no licence that can be activated.
+    #[error("You have no active licence to connect.")]
+    NoLicence,
+    /// The signed-in person has more than one usable licence: name one.
+    #[error("You have more than one licence: choose which one to connect.")]
+    ChooseLicence,
     /// No payment provider is configured, or it could not start a checkout.
     #[error("payments are unavailable")]
     PaymentsUnavailable,
@@ -71,7 +77,9 @@ impl AppError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) | Self::Signature => StatusCode::BAD_REQUEST,
-            Self::NotFound | Self::KeyUnknown | Self::PlanUnknown => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::KeyUnknown | Self::PlanUnknown | Self::NoLicence => {
+                StatusCode::NOT_FOUND
+            }
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
@@ -79,7 +87,7 @@ impl AppError {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             Self::Forbidden(_) | Self::KeyBlocked | Self::LicenceInactive => StatusCode::FORBIDDEN,
-            Self::SeatLimit | Self::PlanUnavailable => StatusCode::CONFLICT,
+            Self::SeatLimit | Self::PlanUnavailable | Self::ChooseLicence => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -101,6 +109,8 @@ impl AppError {
             Self::PlanUnknown => "plan-unknown",
             Self::PlanUnavailable => "plan-unavailable",
             Self::PaymentsUnavailable => "payments-unavailable",
+            Self::NoLicence => "no-licence",
+            Self::ChooseLicence => "choose-licence",
             Self::Internal(_) => "internal",
         }
     }

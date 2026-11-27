@@ -17,7 +17,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use uuid::Uuid;
 
 use super::error::{AppError, ErrorBody};
-use super::{checkouts, plans};
+use super::{checkouts, connect, plans};
 use crate::auth::CurrentUser;
 use crate::config::Config;
 use crate::plans::catalogue::{Plan, PlanKind, Price, SiteCatalogue, SitePlan, Term};
@@ -100,6 +100,7 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         .route("/internal/me", get(me))
         .route("/internal/checkouts", post(checkouts::start))
         .route("/internal/checkouts/{id}", get(checkouts::read))
+        .route("/internal/licences/connect", post(connect::connect))
         .fallback(|| async { AppError::NotFound })
         .with_state(state)
 }
@@ -111,7 +112,14 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         description = "The internal listener of devtab-api, for the site's own pages only. Every \
                        error answers {\"error\": \"<kebab-case code>\", \"message\": \"<English text>\"}."
     ),
-    paths(healthz, plans::internal_plans, me, checkouts::start, checkouts::read),
+    paths(
+        healthz,
+        plans::internal_plans,
+        me,
+        checkouts::start,
+        checkouts::read,
+        connect::connect
+    ),
     modifiers(&BearerScheme),
     components(schemas(
         Health,
@@ -128,7 +136,9 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         checkouts::StartedCheckout,
         checkouts::EmbeddedCheckout,
         checkouts::CheckoutState,
-        checkouts::CheckoutStatus
+        checkouts::CheckoutStatus,
+        connect::ConnectRequest,
+        connect::Connected
     ))
 )]
 struct InternalApi;
@@ -155,6 +165,7 @@ mod tests {
                 "/internal/checkouts",
                 "/internal/checkouts/{id}",
                 "/internal/healthz",
+                "/internal/licences/connect",
                 "/internal/me",
                 "/internal/plans"
             ]

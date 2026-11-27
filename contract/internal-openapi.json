@@ -161,6 +161,92 @@
         }
       }
     },
+    "/internal/licences/connect": {
+      "post": {
+        "tags": [
+          "licences"
+        ],
+        "summary": "`POST /internal/licences/connect`.",
+        "operationId": "connect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Activated for the installation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Connected"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not an installation id or a licence id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`key-blocked` or `licence-inactive`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`no-licence`, or `not-found` for a licence that is not theirs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`choose-licence`, or `seat-limit`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/internal/me": {
       "get": {
         "tags": [
@@ -311,6 +397,49 @@
           "completed",
           "expired"
         ]
+      },
+      "ConnectRequest": {
+        "type": "object",
+        "description": "The installation to connect.",
+        "required": [
+          "inst"
+        ],
+        "properties": {
+          "inst": {
+            "type": "string",
+            "description": "The extension's installation id: 22 base64url characters."
+          },
+          "lid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which licence, when the person has more than one; their only usable\none otherwise."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Connected": {
+        "type": "object",
+        "description": "What the extension stores, as after `POST /v1/activate`.",
+        "required": [
+          "lid",
+          "token",
+          "secret"
+        ],
+        "properties": {
+          "lid": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "description": "The installation's secret; shown to nobody but the extension."
+          },
+          "token": {
+            "type": "string",
+            "description": "The signed licence token."
+          }
+        }
       },
       "EmbeddedCheckout": {
         "type": "object",

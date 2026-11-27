@@ -2,6 +2,7 @@
 
 pub mod checkouts;
 pub mod client_ip;
+pub mod connect;
 pub mod cors;
 pub mod error;
 pub mod health;

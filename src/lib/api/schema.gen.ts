@@ -58,6 +58,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/licences/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /internal/licences/connect`. */
+        post: operations["connect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/me": {
         parameters: {
             query?: never;
@@ -112,6 +129,24 @@ export interface components {
          * @enum {string}
          */
         CheckoutStatus: "open" | "completed" | "expired";
+        /** @description The installation to connect. */
+        ConnectRequest: {
+            /** @description The extension's installation id: 22 base64url characters. */
+            inst: string;
+            /**
+             * @description Which licence, when the person has more than one; their only usable
+             *     one otherwise.
+             */
+            lid?: string | null;
+        };
+        /** @description What the extension stores, as after `POST /v1/activate`. */
+        Connected: {
+            lid: string;
+            /** @description The installation's secret; shown to nobody but the extension. */
+            secret: string;
+            /** @description The signed licence token. */
+            token: string;
+        };
         /** @description Stripe's form for the site's own page. */
         EmbeddedCheckout: {
             /** @description Stripe.js of this API version mounts the form. */
@@ -367,6 +402,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+        };
+    };
+    connect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Activated for the installation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Connected"];
+                };
+            };
+            /** @description Not an installation id or a licence id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `key-blocked` or `licence-inactive` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `no-licence`, or `not-found` for a licence that is not theirs */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `choose-licence`, or `seat-limit` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

@@ -917,3 +917,111 @@ async fn a_plan_not_on_sale_and_no_provider_are_refused() {
     );
     world.clean().await;
 }
+
+// ---- connecting the extension from the site ----
+
+#[tokio::test]
+async fn the_site_connects_the_signed_in_person_s_extension_without_a_key() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let keys = keys();
+    let state = support::api_state(&world.url, shared(&clock), &Config::default())
+        .await
+        .with_auth(Verifier::fixed(
+            &json!({"keys": [keys.jwk]}),
+            ISSUER.to_owned(),
+            shared(&clock),
+        ));
+    let (buyer, nobody) = (world.person().await, world.person().await);
+    let (buyer_token, nobody_token) = (token(&keys, buyer, &clock), token(&keys, nobody, &clock));
+    let inst = "AAAAAAAAAAAAAAAAAAAAAA";
+    let connect = |token: String, body: Value| {
+        let state = state.clone();
+        async move {
+            call(
+                state,
+                "POST",
+                "/internal/licences/connect",
+                &token,
+                Some(body),
+            )
+            .await
+        }
+    };
+
+    let (status, body) = connect(nobody_token.clone(), json!({"inst": inst})).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::NOT_FOUND, Some("no-licence"))
+    );
+    let (status, _) = connect(buyer_token.clone(), json!({"inst": "short"})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // The buyer pays for a subscription.
+    let double = Double::default();
+    let mut lids = Vec::new();
+    for _ in 0..2 {
+        let checkout = world.checkout(buyer, clock.now()).await;
+        let (sub, _) = ids();
+        let cus = format!("cus_{buyer}").replace('-', "");
+        double.set(world.snapshot(&sub, &cus, clock.now() + Duration::days(30)));
+        let event = world
+            .event(
+                "checkout.session.completed",
+                session(checkout, &cus, &sub),
+                clock.now(),
+            )
+            .await;
+        world.process(&double, event, clock.now()).await.unwrap();
+        let lid: String =
+            sqlx::query_scalar("select lid from app.licences where provider_subscription_id = $1")
+                .bind(&sub)
+                .fetch_one(&mut world.owner)
+                .await
+                .unwrap();
+        lids.push(lid);
+        if lids.len() == 1 {
+            // One licence: connected without naming it.
+            let (status, body) = connect(buyer_token.clone(), json!({"inst": inst})).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["lid"], lids[0]);
+            let (_, claims) = devtab_api::licence::token::verify(
+                body["token"].as_str().unwrap(),
+                &support::test_verifiers(),
+            )
+            .unwrap();
+            assert_eq!(
+                (claims["inst"].as_str(), claims["status"].as_str()),
+                (Some(inst), Some("active"))
+            );
+            assert!(body["secret"].as_str().unwrap().len() >= 32);
+        }
+    }
+    // Two licences: the site names one; someone else's is not found.
+    let (status, body) = connect(buyer_token.clone(), json!({"inst": inst})).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("choose-licence"))
+    );
+    let (status, body) = connect(buyer_token.clone(), json!({"inst": inst, "lid": lids[1]})).await;
+    assert_eq!((status, &body["lid"]), (StatusCode::OK, &json!(lids[1])));
+    let (status, _) = connect(nobody_token, json!({"inst": inst, "lid": lids[1]})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Connecting the same browser again takes no second seat.
+    for _ in 0..2 {
+        connect(buyer_token.clone(), json!({"inst": inst, "lid": lids[0]})).await;
+    }
+    let seats: i64 = sqlx::query_scalar(
+        "select count(*) from app.installations i join app.licences l on l.id = i.licence_id
+         where l.lid = $1 and i.status = 'active'",
+    )
+    .bind(&lids[0])
+    .fetch_one(&mut world.owner)
+    .await
+    .unwrap();
+    assert_eq!(seats, 1);
+    world.clean().await;
+}
