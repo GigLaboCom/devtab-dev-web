@@ -78,6 +78,7 @@ const ORIGINS: (&str, &str) = (
     "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
 );
 const SITE: (&str, &str) = ("DEVTAB_SITE_URL", "https://web.example.invalid");
+const SUPABASE: (&str, &str) = ("DEVTAB_SUPABASE_URL", "https://project.example.invalid");
 
 #[test]
 fn a_private_key_that_is_not_the_trusted_one_stops_the_start() {
@@ -133,6 +134,7 @@ fn a_test_key_stops_the_start_in_staging_and_prod() {
             HOST,
             ORIGINS,
             SITE,
+            SUPABASE,
         ]);
         refused(&output, "is a test key");
     }
@@ -148,6 +150,7 @@ fn the_fake_payment_provider_stops_the_start_in_prod() {
         HOST,
         ORIGINS,
         SITE,
+        SUPABASE,
         ("DEVTAB_PAYMENTS", "fake"),
     ]);
     refused(&output, "DEVTAB_PAYMENTS=fake is refused in prod");

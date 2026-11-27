@@ -3,7 +3,7 @@
 //! the extension's endpoints are the contract's (`contract/licence-v1/errors.json`).
 
 use axum::Json;
-use axum::http::header::RETRY_AFTER;
+use axum::http::header::{RETRY_AFTER, WWW_AUTHENTICATE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -25,6 +25,13 @@ pub enum AppError {
     BadRequest(String),
     #[error("not found")]
     NotFound,
+    /// No signed-in person, or a token that does not pass: answered with
+    /// `WWW-Authenticate: Bearer`.
+    #[error("sign-in required")]
+    Unauthorized,
+    /// A signed-in person who may not do this (a blocked account).
+    #[error("{0}")]
+    Forbidden(String),
     #[error("request body is too large")]
     PayloadTooLarge,
     /// Answered with `Retry-After` in whole seconds.
@@ -54,10 +61,11 @@ impl AppError {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::NotFound | Self::KeyUnknown => StatusCode::NOT_FOUND,
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Unavailable | Self::UnavailableFor { .. } => StatusCode::SERVICE_UNAVAILABLE,
-            Self::KeyBlocked | Self::LicenceInactive => StatusCode::FORBIDDEN,
+            Self::Forbidden(_) | Self::KeyBlocked | Self::LicenceInactive => StatusCode::FORBIDDEN,
             Self::SeatLimit => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -67,6 +75,8 @@ impl AppError {
         match self {
             Self::BadRequest(_) => "bad-request",
             Self::NotFound => "not-found",
+            Self::Unauthorized => "unauthorized",
+            Self::Forbidden(_) => "forbidden",
             Self::PayloadTooLarge => "payload-too-large",
             Self::RateLimited { .. } => "rate-limited",
             Self::Unavailable | Self::UnavailableFor { .. } => "unavailable",
@@ -122,6 +132,11 @@ impl IntoResponse for AppError {
                 .headers_mut()
                 .insert(RETRY_AFTER, HeaderValue::from(retry_after_s));
         }
+        if matches!(self, Self::Unauthorized) {
+            response
+                .headers_mut()
+                .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        }
         response
     }
 }
@@ -154,6 +169,15 @@ mod tests {
         ] {
             assert_eq!((error.status().as_u16(), error.code()), (status, code));
         }
+    }
+
+    #[test]
+    fn unauthorized_asks_for_a_bearer_token_and_forbidden_is_403() {
+        let response = AppError::Unauthorized.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()[WWW_AUTHENTICATE], "Bearer");
+        let error = AppError::Forbidden("account blocked".to_owned());
+        assert_eq!((error.status().as_u16(), error.code()), (403, "forbidden"));
     }
 
     #[test]

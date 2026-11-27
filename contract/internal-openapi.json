@@ -27,6 +27,62 @@
         }
       }
     },
+    "/internal/me": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "summary": "`GET /internal/me`: who the access token says is signed in. Never cached.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "The signed-in person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account is blocked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The project's signing keys or the database cannot be reached, or sign-in is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/internal/plans": {
       "get": {
         "tags": [
@@ -123,6 +179,28 @@
           "en",
           "ru"
         ]
+      },
+      "Me": {
+        "type": "object",
+        "description": "The signed-in person, as the API knows them.",
+        "required": [
+          "user",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The account's e-mail address, from Supabase Auth."
+          },
+          "user": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The person's id: the access token's `sub`."
+          }
+        }
       },
       "Plan": {
         "type": "object",
@@ -323,6 +401,12 @@
           "month",
           "year"
         ]
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }

@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::auth::{UserCache, Verifier};
 use crate::clock::SharedClock;
 use crate::config::Config;
 use crate::http::rate_limit::Limits;
@@ -18,6 +19,11 @@ pub struct AppState {
     pub limits: Arc<Limits>,
     pub licence: LicenceSettings,
     pub catalogue: Arc<CatalogueSettings>,
+    /// Checks the access tokens of signed-in people; none without
+    /// `DEVTAB_SUPABASE_URL`, and then a route that needs one answers 503.
+    pub auth: Option<Arc<Verifier>>,
+    /// Recently loaded `app.users` rows.
+    pub users: UserCache,
 }
 
 impl AppState {
@@ -29,6 +35,15 @@ impl AppState {
             limits: Arc::new(Limits::new(&config.rate_limits)),
             licence: config.licence,
             catalogue: Arc::new(config.catalogue()),
+            auth: None,
+            users: UserCache::default(),
         }
+    }
+
+    /// The same state, checking access tokens with `verifier`.
+    #[must_use]
+    pub fn with_auth(mut self, verifier: Verifier) -> Self {
+        self.auth = Some(Arc::new(verifier));
+        self
     }
 }

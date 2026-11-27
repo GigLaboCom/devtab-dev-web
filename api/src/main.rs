@@ -231,7 +231,17 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
             tracing::warn!(error = %err, "could not record --emergency-key in admin_audit");
         }
     }
-    let state = AppState::new(store, Arc::new(SystemClock), signer, &config);
+    let clock = Arc::new(SystemClock);
+    let mut state = AppState::new(store, clock.clone(), signer, &config);
+    if let Some(auth) = config.auth() {
+        let verifier = devtab_api::auth::Verifier::remote(auth.jwks_url, auth.issuer, clock)
+            .context("building the JWKS client")?;
+        state = state.with_auth(verifier);
+    } else {
+        tracing::warn!(
+            "DEVTAB_SUPABASE_URL is not set: the routes for signed-in people answer 503"
+        );
+    }
     let public = TcpListener::bind(config.public_addr)
         .await
         .with_context(|| format!("binding the public listener to {}", config.public_addr))?;
@@ -243,6 +253,7 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
         internal = %config.internal_addr,
         env = ?config.env,
         kid = state.signer.kid(),
+        sign_in = state.auth.is_some(),
         version = env!("CARGO_PKG_VERSION"),
         "api started"
     );

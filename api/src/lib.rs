@@ -1,9 +1,10 @@
 //! The site's backend API: two listeners, one public and one internal, the
 //! licence core and the plans' catalogue behind the extension's endpoints,
-//! and the admin commands.
+//! the signed-in people of the site's pages, and the admin commands.
 #![forbid(unsafe_code)]
 
 pub mod admin;
+pub mod auth;
 pub mod clock;
 pub mod config;
 pub mod http;

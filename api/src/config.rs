@@ -100,6 +100,21 @@ pub struct Config {
     pub payments: Option<String>,
     /// `maxAge` of `GET /v1/plans`, seconds.
     pub plans_max_age_s: u32,
+    /// The Supabase project's address (`https://<project>.supabase.co`;
+    /// locally the API of `supabase start`): its JWKS checks the access tokens
+    /// of signed-in people. Unset (development only): a route that needs a
+    /// signed-in person answers 503.
+    pub supabase_url: Option<String>,
+    /// The `iss` the access tokens carry; `<supabase_url>/auth/v1` unless set.
+    pub jwt_issuer: Option<String>,
+}
+
+/// Where the access tokens of signed-in people are checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthSettings {
+    /// `<supabase_url>/auth/v1/.well-known/jwks.json`.
+    pub jwks_url: String,
+    pub issuer: String,
 }
 
 // The database URL may carry a password, so it stays out of debug output.
@@ -123,6 +138,8 @@ impl fmt::Debug for Config {
             .field("site_url", &self.site_url)
             .field("payments", &self.payments)
             .field("plans_max_age_s", &self.plans_max_age_s)
+            .field("supabase_url", &self.supabase_url)
+            .field("jwt_issuer", &self.jwt_issuer)
             .finish()
     }
 }
@@ -163,6 +180,8 @@ impl Default for Config {
             site_url: DEV_SITE_URL.to_owned(),
             payments: Some(payments::fake::ID.to_owned()),
             plans_max_age_s: 86_400,
+            supabase_url: None,
+            jwt_issuer: None,
         }
     }
 }
@@ -196,7 +215,35 @@ fn site_url(text: &str) -> Option<String> {
         .then(|| format!("https://{}", host.to_ascii_lowercase()))
 }
 
+/// `http(s)://<host>[:<port>]`, with at most one slash after it, as the
+/// Supabase project's address: the slash dropped. `http` only in `dev` (the
+/// local stack).
+fn supabase_url(text: &str, env: Env) -> Option<String> {
+    let (scheme, rest) = text.split_once("://")?;
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let (host, port) = match rest.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (rest, None),
+    };
+    let scheme_ok = scheme == "https" || (scheme == "http" && env.is_dev());
+    let port_ok = port.is_none_or(|p| p.parse::<u16>().is_ok_and(|p| p > 0));
+    (scheme_ok && port_ok && is_host_name(host) && host.len() <= 200)
+        .then(|| format!("{scheme}://{}", rest.to_ascii_lowercase()))
+}
+
 impl Config {
+    /// Where access tokens are checked, when sign-in is configured.
+    pub fn auth(&self) -> Option<AuthSettings> {
+        let url = self.supabase_url.as_ref()?;
+        Some(AuthSettings {
+            jwks_url: format!("{url}/auth/v1/.well-known/jwks.json"),
+            issuer: self
+                .jwt_issuer
+                .clone()
+                .unwrap_or_else(|| format!("{url}/auth/v1")),
+        })
+    }
+
     /// What the plans' catalogue is built with.
     pub fn catalogue(&self) -> CatalogueSettings {
         CatalogueSettings {
@@ -267,6 +314,7 @@ impl Config {
 
         config.read_licence(&get, &mut problems);
         config.read_plans(&get, &mut problems);
+        config.read_auth(&get, &mut problems);
 
         if let Some(filter) = get("DEVTAB_LOG") {
             match EnvFilter::try_new(&filter) {
@@ -330,6 +378,35 @@ impl Config {
                     "DEVTAB_PLANS_MAX_AGE must be seconds from 3600 to 604800 (what the extension \
                      keeps), got `{text}`"
                 )),
+            }
+        }
+    }
+
+    /// The Supabase project, whose JWKS and issuer check the access tokens.
+    fn read_auth(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        match get("DEVTAB_SUPABASE_URL") {
+            Some(text) => match supabase_url(&text, config.env) {
+                Some(url) => config.supabase_url = Some(url),
+                None => problems.push(format!(
+                    "DEVTAB_SUPABASE_URL must be https:// and a host name (http:// too in dev), an \
+                     optional port and no path, such as https://project.supabase.co; got `{text}`"
+                )),
+            },
+            None if !config.env.is_dev() => {
+                problems.push("DEVTAB_SUPABASE_URL is required in staging and prod".to_owned());
+            }
+            None => {}
+        }
+        if let Some(issuer) = get("DEVTAB_JWT_ISSUER") {
+            if issuer.starts_with("https://")
+                || (issuer.starts_with("http://") && config.env.is_dev())
+            {
+                config.jwt_issuer = Some(issuer.trim_end_matches('/').to_owned());
+            } else {
+                problems.push(format!(
+                    "DEVTAB_JWT_ISSUER must be an https:// address (http:// too in dev), got `{issuer}`"
+                ));
             }
         }
     }
@@ -480,6 +557,7 @@ mod tests {
     }
 
     const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
+    const SUPABASE: &str = "https://project.example.invalid";
 
     #[test]
     fn the_internal_listener_leaves_loopback_outside_dev() {
@@ -490,6 +568,7 @@ mod tests {
                 ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
                 ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
                 ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+                ("DEVTAB_SUPABASE_URL", SUPABASE),
             ])
             .unwrap();
             assert_eq!(
@@ -515,6 +594,7 @@ mod tests {
             ("DEVTAB_LICENCE_HOST", "Licence.Example.Invalid"),
             ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
             ("DEVTAB_SITE_URL", "https://Web.Example.Invalid/"),
+            ("DEVTAB_SUPABASE_URL", SUPABASE),
         ])
         .unwrap();
         assert_eq!(config.env, Env::Prod);
@@ -614,14 +694,14 @@ mod tests {
     }
 
     #[test]
-    fn staging_and_prod_need_the_licence_host_the_extension_origins_and_the_site() {
+    fn staging_and_prod_need_the_licence_host_the_extension_origins_the_site_and_supabase() {
         for env in ["staging", "prod"] {
             let err = load(&[
                 ("DEVTAB_ENV", env),
                 ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
             ])
             .unwrap_err();
-            assert_eq!(err.0.len(), 3, "{env}: {err}");
+            assert_eq!(err.0.len(), 4, "{env}: {err}");
         }
     }
 
@@ -669,6 +749,7 @@ mod tests {
                 ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
                 ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
                 ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+                ("DEVTAB_SUPABASE_URL", SUPABASE),
                 ("DEVTAB_PAYMENTS", "fake"),
             ]
         };
@@ -720,6 +801,7 @@ mod tests {
                 ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
                 ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
                 ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+                ("DEVTAB_SUPABASE_URL", SUPABASE),
                 ("DEVTAB_DEV_SIGNING_KEYS_FILE", "/tmp/keys.json"),
             ])
             .unwrap_err();
@@ -735,6 +817,60 @@ mod tests {
             ("DEVTAB_TOKEN_CHECK_DAYS", "10"),
             ("DEVTAB_TOKEN_WINDOW_DAYS", "14"),
             ("DEVTAB_TOKEN_WARN_DAYS", "7"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 1, "{err}");
+    }
+
+    #[test]
+    fn the_jwks_and_the_issuer_come_from_the_supabase_url() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert_eq!(config.auth(), None, "no sign-in without a project");
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", "http://127.0.0.1:54332/"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.auth(),
+            Some(AuthSettings {
+                jwks_url: "http://127.0.0.1:54332/auth/v1/.well-known/jwks.json".to_owned(),
+                issuer: "http://127.0.0.1:54332/auth/v1".to_owned(),
+            })
+        );
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", "https://Project.Example.Invalid"),
+            ("DEVTAB_JWT_ISSUER", "https://auth.example.invalid/auth/v1/"),
+        ])
+        .unwrap();
+        let auth = config.auth().unwrap();
+        assert_eq!(
+            auth.jwks_url,
+            "https://project.example.invalid/auth/v1/.well-known/jwks.json"
+        );
+        assert_eq!(auth.issuer, "https://auth.example.invalid/auth/v1");
+    }
+
+    #[test]
+    fn a_supabase_url_with_a_path_or_plain_http_outside_dev_is_refused() {
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            (
+                "DEVTAB_SUPABASE_URL",
+                "https://project.example.invalid/auth/v1",
+            ),
+            ("DEVTAB_JWT_ISSUER", "issuer"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 2, "{err}");
+        let err = load(&[
+            ("DEVTAB_ENV", "staging"),
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
+            ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+            ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+            ("DEVTAB_SUPABASE_URL", "http://127.0.0.1:54332"),
         ])
         .unwrap_err();
         assert_eq!(err.0.len(), 1, "{err}");
