@@ -2,7 +2,10 @@
  * Sign-in end to end, against the local stack, without any real sign-in
  * provider: the site's forms, the mail in the local mail catcher, the code
  * and the link from it, the session's cookies, and the API checking the
- * session's access token against the stack's JWKS.
+ * session's access token against the stack's JWKS; then, when the site
+ * offers passwords (script/site-server does by default), signing up with a
+ * password, confirming the address by the mail's code, signing in with it,
+ * and resetting it by the code and by the link of a reset mail.
  *
  *   script/auth-up && script/api-dev     # the full local stack, then the API
  *   pnpm build && script/site-server     # the built site, with sign-in
@@ -14,7 +17,8 @@
  * SITE (http://127.0.0.1:4321), API (the internal listener,
  * http://127.0.0.1:8081), MAILPIT (http://127.0.0.1:54334). It signs in two
  * new addresses under example.invalid and leaves their accounts in the local
- * database. Tokens, codes and cookies are printed masked.
+ * database (three with passwords). Tokens, codes and cookies are printed
+ * masked.
  */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -67,12 +71,12 @@ async function post(jar: Jar, path: string, fields: Record<string, string>): Pro
   return response;
 }
 
-/** The newest mail to `address` in the mail catcher: its HTML. */
-async function mailTo(address: string): Promise<string> {
+/** The newest mail to `address` in the mail catcher, once it has more than `seen` of them: its HTML. */
+async function mailTo(address: string, seen = 0): Promise<string> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const search = await fetch(`${mailpit}/api/v1/search?query=${encodeURIComponent(`to:"${address}"`)}`);
     const { messages } = (await search.json()) as { messages: { ID: string }[] };
-    if (messages.length > 0) {
+    if (messages.length > seen) {
       const message = (await (await fetch(`${mailpit}/api/v1/message/${messages[0].ID}`)).json()) as {
         HTML: string;
         Subject: string;
@@ -114,9 +118,10 @@ const address = (what: string) => `e2e-${what}-${randomBytes(4).toString('hex')}
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.match(html, /<form method="post" action="\/auth\/sign-in\/"/);
-  assert.doesNotMatch(html, /<script/);
+  const scripts = (html.match(/<script\b[^>]*>/g) ?? []).filter(tag => !tag.includes('data-theme-script'));
+  assert.deepEqual(scripts, [], "no script but the theme's");
   jar.take(response);
-  step('GET /sign-in/', '200, the e-mail form, no script, Cache-Control: no-store');
+  step('GET /sign-in/', "200, the e-mail form, no script but the theme's, Cache-Control: no-store");
 }
 
 // 2. Sign in by the code from the mail.
@@ -211,6 +216,96 @@ const jar = new Jar();
   const replay = await page(other, new URL(callback).pathname + new URL(callback).search);
   assert.equal(replay.location, '/ru/sign-in/?next=%2Fru%2Fpro%2F&error=link');
   step('the link in another browser', '303 to /ru/sign-in/?…&error=link');
+}
+
+// 6. Passwords, when the site offers them: sign up, confirm by the mail's code, sign in.
+const offersPasswords = (await (await fetch(new URL('/sign-in/', site))).text()).includes('action="/auth/password/"');
+if (!offersPasswords) {
+  step('passwords', 'not offered by this site (DEVTAB_SIGN_IN_METHODS): skipped');
+} else {
+  const holder = address('password');
+  const first = `first ${randomBytes(6).toString('hex')}`;
+  const second = `second ${randomBytes(6).toString('hex')}`;
+  const browser = new Jar();
+  const signedInAs = async () => (await page(browser, '/sign-in/')).text.includes(`You're signed in as ${holder}.`);
+  const signOut = async () => {
+    await post(browser, '/auth/signout/', { locale: 'en' });
+    assert.ok(!(await signedInAs()));
+  };
+  const signIn = (password: string) =>
+    post(browser, '/auth/password/', { step: 'sign-in', email: holder, password, locale: 'en' });
+
+  const made = await post(browser, '/auth/password/', {
+    step: 'sign-up',
+    email: holder,
+    password: first,
+    confirm: first,
+    locale: 'en',
+  });
+  assert.deepEqual([made.status, made.headers.get('location')], [303, '/sign-in/']);
+  assert.equal((await signIn(first)).headers.get('location'), '/sign-in/?error=unconfirmed');
+  step('POST /auth/password/ (sign-up)', `303 to /sign-in/, address ${holder}; unconfirmed, the password waits`);
+  const confirmation = await mailTo(holder);
+  const code = confirmation.match(/<strong>(\d{6,10})<\/strong>/)?.[1];
+  assert.ok(code, 'a code in the confirmation mail');
+  const confirmed = await post(browser, '/auth/sign-in/', { step: 'code', code, locale: 'en' });
+  assert.equal(confirmed.headers.get('location'), '/sign-in/');
+  assert.ok(await signedInAs());
+  step('the confirmation mail', `its code ${mask(code)} confirms the address and signs in`);
+  await signOut();
+
+  assert.equal((await signIn('not the password')).headers.get('location'), '/sign-in/?error=credentials');
+  assert.equal((await signIn(first)).headers.get('location'), '/sign-in/');
+  assert.ok(await signedInAs());
+  step('POST /auth/password/ (sign-in)', 'a wrong password is refused, the right one signs in');
+  await signOut();
+
+  // 7. A forgotten password, by the reset mail's code, in another browser than the one that asked.
+  const asker = new Jar();
+  const forgot = await post(asker, '/auth/password/', { step: 'forgot', email: holder, locale: 'en' });
+  assert.equal(forgot.headers.get('location'), '/forgot-password/');
+  const reset = await mailTo(holder, 1);
+  assert.match(reset, /A new password for DevTab\.Dev/);
+  const resetCode = reset.match(/<strong>(\d{6,10})<\/strong>/)?.[1];
+  assert.ok(resetCode, 'a code in the reset mail');
+  const verified = await post(asker, '/auth/password/', { step: 'code', code: resetCode, locale: 'en' });
+  assert.equal(verified.headers.get('location'), '/reset-password/');
+  const form = await page(asker, '/reset-password/');
+  assert.ok(form.text.includes(`Choose a new password for ${holder}.`), form.text);
+  step('the reset mail', `its code ${mask(resetCode)} opens /reset-password/ for ${holder}`);
+  const saved = await post(asker, '/auth/password/', {
+    step: 'update',
+    password: second,
+    confirm: second,
+    locale: 'en',
+  });
+  assert.equal(saved.headers.get('location'), '/sign-in/?notice=password');
+  assert.equal((await signIn(first)).headers.get('location'), '/sign-in/?error=credentials');
+  assert.equal((await signIn(second)).headers.get('location'), '/sign-in/');
+  step('POST /auth/password/ (update)', 'the new password signs in, the old one no longer');
+  await signOut();
+
+  // 8. The reset mail's link, in the browser that asked, in Russian.
+  await new Promise(resolve => setTimeout(resolve, 1100)); // Auth sends one mail a second to an address.
+  const linkBrowser = new Jar();
+  await post(linkBrowser, '/auth/password/', { step: 'forgot', email: holder, locale: 'ru', next: '/ru/pro/' });
+  const again = await mailTo(holder, 2);
+  const link = again.match(/href="([^"]*\/auth\/v1\/verify\?[^"]*)"/)?.[1]?.replace(/&amp;/g, '&');
+  assert.ok(link, 'a link in the reset mail');
+  const callback = (await fetch(link, { redirect: 'manual' })).headers.get('location') ?? '';
+  assert.match(
+    callback,
+    /\/auth\/callback\/\?.*via=recovery.*code=|\/auth\/callback\/\?.*code=.*via=recovery/,
+    callback,
+  );
+  const landed = await page(linkBrowser, new URL(callback).pathname + new URL(callback).search);
+  assert.deepEqual([landed.status, landed.location], [303, '/ru/reset-password/?next=%2Fru%2Fpro%2F']);
+  const ready = await page(linkBrowser, '/ru/reset-password/?next=%2Fru%2Fpro%2F');
+  assert.ok(ready.text.includes(`Выберите новый пароль для ${holder}.`), ready.text);
+  step('the reset link', '/auth/callback/ sends this browser on to /ru/reset-password/ with the form');
+  const elsewhere = await page(new Jar(), '/ru/reset-password/');
+  assert.ok(!elsewhere.text.includes('Выберите новый пароль'), 'another browser gets no form');
+  step('/reset-password/ in another browser', 'no form');
 }
 
 console.log('sign-in: every step passed');
