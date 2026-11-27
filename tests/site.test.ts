@@ -1,8 +1,10 @@
 /**
- * The built site (dist/, after `pnpm build`): every page in every locale with
- * the right language, canonical URL and alternates, a sitemap of exactly
- * those pages, internal links that reach a file, and nothing loaded from
- * another host.
+ * The built site's static part (dist/client/, after `pnpm build`): every page
+ * in every locale with the right language, canonical URL and alternates, a
+ * sitemap of exactly those pages and the server's indexed ones, internal
+ * links that reach a file or a page of the server, nothing loaded from
+ * another host, and the content security policy on every page. The server's
+ * pages themselves are tested on the running server, in server.test.ts.
  */
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -10,9 +12,12 @@ import { join, relative } from 'node:path';
 import test from 'node:test';
 import { defaultLocale, locales } from '../src/i18n/config.ts';
 import { pages } from '../src/lib/pages.ts';
+import { serverPages } from '../src/lib/serverPages.ts';
 import { siteUrl } from '../src/lib/site.ts';
+import { cspProblems } from './csp.ts';
+import { decode, tags } from './html.ts';
 
-const dist = new URL('../dist/', import.meta.url).pathname;
+const dist = new URL('../dist/client/', import.meta.url).pathname;
 const origin = new URL(siteUrl).origin;
 
 /** The address a page is served at: the default locale at the root, the others under their prefix. */
@@ -29,25 +34,15 @@ function files(directory: string, extension: string): string[] {
   });
 }
 
-const decode = (value: string) =>
-  value
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+/** The paths of the server's pages, in every locale. */
+const serverPaths = new Set(
+  Object.values(serverPages).flatMap(page => locales.map(locale => pathOf(locale, page.path))),
+);
 
-/** Every `<name …>` tag of a page, as a map of its attributes. */
-function tags(html: string, name: string): Map<string, string>[] {
-  return [...html.matchAll(new RegExp(`<${name}\\b([^>]*)>`, 'gi'))].map(
-    ([, attributes]) =>
-      new Map([...attributes.matchAll(/([\w:-]+)(?:="([^"]*)")?/g)].map(([, key, value = '']) => [key, decode(value)])),
-  );
-}
-
-/** The file a site path is served from, if the build has one. */
+/** The file a site path is served from, if the build has one, or the server's page at that path. */
 function served(path: string): string | undefined {
   const clean = decodeURIComponent(path.replace(/[?#].*$/, ''));
+  if (serverPaths.has(clean)) return clean;
   return [join(dist, clean), join(dist, clean, 'index.html')].find(file => existsSync(file) && statSync(file).isFile());
 }
 
@@ -112,7 +107,10 @@ test('the sitemap lists every localised URL once, with all its alternates', () =
     loc: decode(body.match(/<loc>([^<]*)<\/loc>/)?.[1] ?? ''),
     alternates: [...body.matchAll(/hreflang="([^"]*)" href="([^"]*)"/g)].map(([, lang, href]) => [lang, decode(href)]),
   }));
-  const expected = Object.values(pages).flatMap(path =>
+  const indexed = Object.values(serverPages)
+    .filter(page => page.index)
+    .map(page => page.path);
+  const expected = [...Object.values(pages), ...indexed].flatMap(path =>
     locales.map(locale => ({
       loc: urlOf(locale, path),
       alternates: [...locales.map(other => [other, urlOf(other, path)]), ['x-default', urlOf(defaultLocale, path)]],
@@ -192,4 +190,23 @@ test('the built pages load nothing from another host', () => {
     }
   }
   assert.deepEqual(foreign, []);
+});
+
+test('every page carries the content security policy, and nothing on it breaks the policy', () => {
+  const problems = files(dist, '.html').flatMap(file =>
+    cspProblems(readFileSync(file, 'utf8')).map(problem => `${relative(dist, file)}: ${problem}`),
+  );
+  assert.deepEqual(problems, []);
+});
+
+test('the policy check catches a missing directive, another host, a style attribute and an unhashed script', () => {
+  const page = (policy: string, body = '') =>
+    `<html><head><meta http-equiv="content-security-policy" content="${policy}"></head><body>${body}</body></html>`;
+  const good = "default-src 'self';form-action 'self';object-src 'none';base-uri 'self'; style-src 'self'";
+  assert.deepEqual(cspProblems(page(good, '<p>x</p>')), []);
+  assert.equal(cspProblems('<html></html>').length, 1);
+  assert.equal(cspProblems(page(good.replace("form-action 'self';", ''))).length, 1);
+  assert.equal(cspProblems(page(`${good}; img-src https://cdn.example.invalid`)).length, 1);
+  assert.equal(cspProblems(page(good, '<p style="color: red">x</p>')).length, 1);
+  assert.equal(cspProblems(page(good, '<script>alert(1)</script>')).length, 1);
 });

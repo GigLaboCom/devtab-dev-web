@@ -1,0 +1,58 @@
+{
+  "v": 1,
+  "catalog": "2026-11-24.1",
+  "maxAge": 86400,
+  "manageUrl": "https://web.example.invalid/pro/manage/",
+  "locale": "en",
+  "plans": [
+    {
+      "id": "free",
+      "kind": "free",
+      "term": null,
+      "name": "Free",
+      "summary": "Every tool, in full, offline.",
+      "includes": ["All 44 tools", "Nothing you paste leaves this browser"],
+      "price": null,
+      "priceNote": null,
+      "badge": null,
+      "checkoutUrl": null,
+      "until": null,
+      "available": false,
+      "locale": "en"
+    },
+    {
+      "id": "pro-monthly",
+      "kind": "paid",
+      "term": "month",
+      "name": "Monthly",
+      "summary": "Pro, billed every month.",
+      "includes": [
+        "Tool history and its archive",
+        "Tools remember your options",
+        "Copy automatically after generating"
+      ],
+      "price": { "amount": 1111, "currency": "XTS" },
+      "priceNote": "Tax calculated at checkout.",
+      "badge": null,
+      "checkoutUrl": "https://web.example.invalid/pro/checkout/?plan=pro-monthly",
+      "until": null,
+      "available": false,
+      "locale": "en"
+    },
+    {
+      "id": "pro-annual",
+      "kind": "paid",
+      "term": "year",
+      "name": "Annually",
+      "summary": "Pro, billed once a year.",
+      "includes": ["Everything in Monthly"],
+      "price": { "amount": 11110, "currency": "XTS" },
+      "priceNote": "Tax calculated at checkout.",
+      "badge": "Save with a year",
+      "checkoutUrl": "https://web.example.invalid/pro/checkout/?plan=pro-annual",
+      "until": null,
+      "available": false,
+      "locale": "en"
+    }
+  ]
+}
