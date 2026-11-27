@@ -5,9 +5,12 @@ reviewing code. `devtab-dev` is the project's code name; the site shows the
 product's name as its wordmark.
 
 The site is empty on purpose: a home page, a 404, `robots.txt`, a sitemap and
-a language switch, in English and Russian. It is a static Astro site with no
-client-side JavaScript, no analytics, no third-party scripts and nothing
-loaded from another host.
+a language switch, in English and Russian. It is an Astro site whose pages are
+prerendered into static files, with no client-side JavaScript, no analytics,
+no third-party scripts and nothing loaded from another host. Astro's Node
+adapter adds a server that serves those files and renders the few pages that
+need it (see [The server](#the-server)): the plans page and signing in to an
+account of the site by e-mail.
 
 The project has three sibling repositories: `devtab-dev-extension` (the
 extension), `devtab-dev-docs` (developer documents, private) and
@@ -41,13 +44,15 @@ or transitive, published less than two weeks ago.
 | Command             | What it does                                                           |
 | ------------------- | ---------------------------------------------------------------------- |
 | `pnpm dev`          | Development server at http://localhost:4321                            |
-| `pnpm build`        | Static build to `dist/`                                                |
-| `pnpm preview`      | Serves `dist/`                                                         |
+| `pnpm build`        | Build: static pages to `dist/client/`, the server to `dist/server/`    |
+| `pnpm preview`      | Serves the build                                                       |
+| `pnpm start`        | Runs the built server, `dist/server/entry.mjs` (`HOST`, `PORT`)        |
 | `pnpm check`        | Everything below, in order: the one command to run before a commit     |
 | `pnpm typecheck`    | `astro check`: TypeScript and the templates                            |
 | `pnpm lint`         | ESLint                                                                 |
 | `pnpm format:check` | Prettier (`pnpm format` writes)                                        |
 | `pnpm test`         | `node --test`: the catalogues and templates, then the build in `dist/` |
+| `pnpm test:server`  | The server's pages alone, on the built server (part of `pnpm test`)    |
 
 `pnpm test` checks the build, so it runs after `pnpm build` (as `pnpm check`
 does). It proves that:
@@ -62,26 +67,46 @@ does). It proves that:
 - every built page is listed in `src/lib/pages.ts`, and the sitemap lists
   exactly the localised URLs, each with its alternates;
 - internal links and references reach a file of the build;
-- the built pages load nothing from another host.
+- the built pages load nothing from another host;
+- every page carries the content security policy, and nothing on a page
+  breaks it;
+- every page the server renders (`src/lib/serverPages.ts`) answers in every
+  locale on the built server, `dist/server/entry.mjs`, started against one
+  stub (`node:http`) of the API's internal listener (the plans of
+  `tests/fixtures/internal-plans.json`) and of Supabase Auth, with the same
+  checks of language, canonical URL, alternates, switch and policy, and no
+  script; `/pro/` shows what the catalogue says; the sign-in forms ask Supabase
+  Auth for the mail, keep `next` to the site, refuse a form from another site
+  and count attempts per address (`tests/server.test.ts`);
+- the site's code reads only public values and a rate limit from its
+  environment and never names Supabase's secret key, and neither does the
+  build (`tests/no-secrets.test.ts`).
 
 ## Layout
 
 ```
-astro.config.mjs          site address, URL shape, i18n routing, Tailwind
+astro.config.mjs          site address, URL shape, i18n routing, the Node adapter, the content security policy, Tailwind
 src/i18n/config.ts        the locales; the first is the default
 src/i18n/messages/*.ts    one string catalogue per locale (en.ts is the source)
 src/i18n/wordmark.ts      the wordmark every locale shows
 src/i18n/validate.ts      the catalogue check (the build and the tests)
 src/i18n/index.ts         messages(locale), the routes of a localised page
 src/lib/pages.ts          every localised page, by id and path
+src/lib/serverPages.ts    every localised page the server renders, by id: path, whether indexed
 src/lib/site.ts           the site's address
-src/lib/api/schema.gen.ts the internal API's types, written by script/gen (no page uses them yet)
+src/lib/price.ts          a plan's price as the page shows it
+src/lib/api/client.ts     the server's calls to the API's internal listener, as the signed-in person
+src/lib/auth/             sign-in's settings, the Supabase server client, the pending address, attempts
+src/middleware.ts         reads the session on the pages that need it
+src/env.d.ts              what the middleware gives a page (`locals.auth`)
+src/lib/api/schema.gen.ts the internal API's types, written by script/gen
 src/layouts/              <html lang>, title, canonical URL, alternates
 src/components/           the header and the language switch
-src/pages/[...locale]/    the localised pages
+src/pages/[...locale]/    the localised pages; pro/ and sign-in are rendered by the server
+src/pages/auth/           the sign-in forms' endpoints: sign-in, callback, signout
 src/pages/                404, robots.txt, sitemap.xml
 src/styles/tokens.css     the design tokens (placeholders)
-tests/                    node:test, from the sources and from dist/
+tests/                    node:test, from the sources and from the build (dist/client/)
 ```
 
 ## Localisation
@@ -105,6 +130,16 @@ tests/                    node:test, from the sources and from dist/
 - The 404 answers in English, the default locale: a static host serves one
   404 for every address. Its switch links each locale's home page.
 
+### Texts awaiting the owner
+
+The texts of the pages the server renders (`pages.pro`, `pages.signIn`) and
+of the sign-in mail (`supabase/templates/sign_in.html`, and its subject in
+`supabase/config.toml`) are not the owner's yet: they are the specifications' words where those give any,
+otherwise the shortest factual text, and the English catalogue says so. They
+stay together under their page's key, so that the owner approves or replaces
+them in one place. No marketing copy and no claim about the product beyond
+the specifications.
+
 ### Add a locale
 
 Two steps; `de` as the example:
@@ -127,6 +162,136 @@ Three steps; an `about` page as the example:
 2. `about: 'about/'` in `src/lib/pages.ts`.
 3. `pages.about` (at least `title` and `description`) in every catalogue.
 
+## The server
+
+`astro.config.mjs` keeps `output: 'static'` and adds the Node adapter
+(`@astrojs/node`, standalone): every page is prerendered as before, into
+`dist/client/`, which still works as plain static files; a page that needs
+the server says `export const prerender = false`. `dist/server/entry.mjs` is
+the server: it serves `dist/client/` and renders those pages.
+
+```bash
+pnpm build
+HOST=127.0.0.1 PORT=4321 pnpm start   # http://127.0.0.1:4321
+```
+
+The server's pages are listed in `src/lib/serverPages.ts` (path, and
+whether search engines index the page: the sitemap lists the indexed ones,
+the others carry `noindex`), written once in `src/pages/[...locale]/` like
+the others, with `export const prerender = false`, and their locale comes
+from the address (`localeOfParam`): an unknown prefix is the site's 404. They
+call the API's internal listener from the server, never from the browser, at
+`DEVTAB_API_INTERNAL_URL` (default `http://127.0.0.1:8081`, the API's
+internal listener in development), through `src/lib/api/client.ts`, whose
+bodies are typed by `src/lib/api/schema.gen.ts`. The server sends their
+content security policy as a header. Only the site's own host and the
+loopback addresses are believed in a request's `Host` header
+(`security.allowedDomains`): the forms' origin check and the sign-in mail's
+link back are built from it.
+
+### The plans page
+
+`/pro/` (and `/ru/pro/`) shows the cards of `GET /internal/plans` in the
+page's language: name, badge, price and period, summary, price note, what a
+plan includes. The plans' texts are data (`config/plans.toml`, README,
+"Plans"), and a plan without texts in the page's language shows its English
+ones, marked with their `lang`. A paid plan that can be bought now links to
+`/pro/checkout/?plan=<id>`; one that cannot says "Soon", and while no paid
+plan can be bought the page says that purchases are not open yet. Nothing on
+the page depends on the visitor, so it carries `Cache-Control: public,
+max-age=300`; when the API cannot be reached it answers 503 with
+`no-store`. With the repository's catalogue no plan is available, so every
+paid plan says "Soon"; the fake provider's XTS prices show only in `dev`.
+The checkout itself is not built yet (it waits for the payment provider), so
+an available plan's link would lead to the 404.
+
+### Signing in
+
+`/sign-in/` (and `/ru/sign-in/`) signs a person in to an account of the site,
+which Supabase Auth keeps, by e-mail only: no other way is offered until the
+owner chooses one, and no captcha. It works without client-side JavaScript:
+plain forms post to `/auth/sign-in/`, which calls Supabase Auth from the
+server and answers 303.
+
+1. The e-mail form: Supabase Auth sends one mail
+   (`supabase/templates/sign_in.html`) with a link and a one-time code. The
+   address waits for the code in an `HttpOnly` cookie of the site
+   (`devtab-sign-in`, an hour).
+2. The link works in the browser that asked (its PKCE verifier is a cookie of
+   that browser) and comes back to `/auth/callback/`, which exchanges its code
+   for the session; opened elsewhere it comes back with "enter the code
+   instead". The code works anywhere: the code form checks it.
+3. The session lives in cookies that `@supabase/ssr` manages, `HttpOnly` and
+   `SameSite=Lax` (no script reads them). `src/middleware.ts` reads it only
+   on the pages that need it (those of `serverPages` marked `session`, and
+   `/auth/*`), verifying the token with `getClaims()` against the project's
+   keys and refreshing it; the cacheable pages never touch it, so no
+   session cookie is set on a response a cache may keep. A page reads the
+   person as `locals.auth`, and `src/lib/api/client.ts` passes their access
+   token to the API as `Authorization: Bearer …`.
+4. Signed in, the page shows who and offers signing out
+   (`POST /auth/signout/`). `?next=<path of this site>` sends a signed-in
+   person there, and the forms carry it through the sign-in; anything but a
+   path of this site is dropped. The account's own page comes later.
+
+Astro's origin check refuses a form posted from another site. Each client
+address may try 10 times an hour (`DEVTAB_RATE_SIGN_IN_PER_IP`, counted in
+the server's memory, before Supabase Auth's own limits). The pages are never
+cached and never indexed. The site holds no secret: only the project's
+address and its publishable key, which anyone may see.
+
+### Run it locally
+
+The site's server against the API, without sign-in:
+
+```bash
+script/db-up && script/api-dev      # the API, its internal listener on 127.0.0.1:8081
+pnpm build && script/site-server    # http://127.0.0.1:4321
+```
+
+With sign-in, the full local stack: `script/auth-up` starts Postgres, Auth,
+the gateway (http://127.0.0.1:54332) and the mail catcher, Mailpit
+(http://127.0.0.1:54334), where every sign-in mail lands; nothing leaves the
+machine. `script/site-server` then reads the stack's publishable key from
+`supabase status` and passes it on; nothing writes it into a file.
+
+```bash
+script/auth-up                      # the stack's containers; the first start pulls two images
+script/api-dev                      # checks access tokens against the stack's JWKS
+pnpm build && script/site-server    # http://127.0.0.1:4321/sign-in/; mails at http://127.0.0.1:54334
+node script/e2e-sign-in.ts          # sign in by the code and by the link, end to end
+supabase --workdir . stop           # stop the stack when done: its ports are on every interface
+```
+
+`script/e2e-sign-in.ts` starts and stops nothing: it posts the forms, reads
+the mail from Mailpit, signs in by its code, checks that the API accepts the
+session's access token (and refuses none or a forged one), signs out, then
+signs in by the link in the same browser and shows that the link fails in
+another. It prints tokens and codes masked and leaves its two
+`…@example.invalid` accounts in the local database.
+
+### The site's configuration
+
+The server reads it when it runs; every value is public.
+
+| Variable                          | Default                 | Note                                                          |
+| --------------------------------- | ----------------------- | ------------------------------------------------------------- |
+| `HOST`, `PORT`                    | `localhost`, `4321`     | where the server listens (`@astrojs/node`)                    |
+| `DEVTAB_API_INTERNAL_URL`         | `http://127.0.0.1:8081` | the API's internal listener                                   |
+| `DEVTAB_SUPABASE_URL`             | none                    | the Supabase project, as the browser reaches it; with the key |
+| `DEVTAB_SUPABASE_PUBLISHABLE_KEY` | none                    | its publishable key; without both, sign-in is off             |
+| `DEVTAB_RATE_SIGN_IN_PER_IP`      | `10`                    | sign-in attempts an hour, by client address                   |
+
+## Content security policy
+
+Every page carries a content security policy (`security.csp` in
+`astro.config.mjs`), which Astro writes into a `<meta http-equiv>` tag:
+`default-src 'self'`, `form-action 'self'`, `object-src 'none'`,
+`base-uri 'self'`, and for scripts and styles `'self'` plus the hashes of
+Astro's own. Nothing loads from another host and forms post only to the site.
+A `style` attribute or a page's own script in its markup would be blocked:
+style with Tailwind classes. `pnpm test` checks every page's policy.
+
 ## Styling
 
 Tailwind CSS v4 through its Vite plugin (`src/styles/global.css`). Colours,
@@ -148,12 +313,12 @@ for another address; run the tests with the same `SITE_URL`.
 two listeners. The public one (`:8080`) answers `/api/healthz`,
 `/api/readyz` and the extension's endpoints: the licence's `POST /v1/activate`,
 `/v1/refresh` and `/v1/deactivate`, and the plans' catalogue, `GET /v1/plans`;
-the internal one (`127.0.0.1:8081` in development) answers `/internal/healthz`
-and `/internal/plans` and is meant only for the site's own pages, never
-published. It reads its configuration from `DEVTAB_*` variables
+the internal one (`127.0.0.1:8081` in development) answers `/internal/healthz`,
+`/internal/plans` and `/internal/me` and is meant only for the site's own
+pages, never published. It reads its configuration from `DEVTAB_*` variables
 and keeps its data in Postgres 17, schema `app`, as the role `devtab_api`.
-The site does not call it yet, and the site's build does not change because
-of it.
+The site's server calls the internal listener for the pages it renders
+(`/pro/`), as the signed-in person when there is one.
 
 The backend stands on [Supabase](https://supabase.com): its Postgres holds the
 API's data, and Supabase Auth holds the users, so both are managed the same
@@ -261,6 +426,35 @@ the extension's plans specification, the fake provider's prices XTS 11.11 and
 XTS 111.10, and no plan available: their final wording and prices are not
 decided, so `GET /v1/plans` answers an empty list.
 
+### Signed-in people
+
+The API keeps no session: a route of the internal listener that needs a
+signed-in person takes the `CurrentUser` extractor (`api/src/auth/`), which
+reads `Authorization: Bearer <Supabase access token>` and checks it there,
+against the project's JWKS (`<DEVTAB_SUPABASE_URL>/auth/v1/.well-known/jwks.json`):
+
+- a key of the set signed it, with ES256 or RS256 and the key's own
+  algorithm; a shared HS256 secret is never accepted, so the project signs
+  with an asymmetric key (locally an ES256 key of this machine, below);
+- `iss` is the project's (`<DEVTAB_SUPABASE_URL>/auth/v1`, or
+  `DEVTAB_JWT_ISSUER`), `aud` is `authenticated`, `exp` has not passed by the
+  API's clock (30 seconds of leeway), `sub` is a UUID, the session is not
+  anonymous;
+- the set is kept for five minutes; a token with a `kid` the set lacks fetches
+  it again, at most every 30 seconds; when it cannot be fetched the keys
+  already kept still work, and with none that matches the answer is 503, not
+  401;
+- the person is the token's `sub` and nothing else (not an id from the body,
+  the query or a header, not a role from the token), and must have an
+  `app.users` row (the trigger on `auth.users` makes it), read again every
+  minute: none is 401, `blocked` is 403.
+
+No header, or a token that does not pass: 401 `unauthorized` with
+`WWW-Authenticate: Bearer`. Without `DEVTAB_SUPABASE_URL` (allowed in `dev`
+only) these routes answer 503. So far one route needs a person:
+`GET /internal/me`, `{"user": "<uuid>", "email": "<the account's address>"}`,
+never cached; the account pages of a later stage add to it.
+
 ### The internal API's types
 
 The internal listener's routes and their bodies are described with `utoipa`
@@ -269,8 +463,8 @@ in the Rust code. `script/gen` writes that description,
 from it, `src/lib/api/schema.gen.ts` (`openapi-typescript`, a development
 dependency of the site); both are committed and written by nothing else.
 `script/gen --check`, in `script/check-all` and CI, fails when either is not
-what the code gives. No page uses the types yet; the site's checks accept the
-file, Prettier, ESLint and Tailwind skip it, and the build does not change.
+what the code gives. The site's API client (`src/lib/api/client.ts`) takes
+its types from it; Prettier, ESLint and Tailwind skip the file.
 
 ### The contract with the extension
 
@@ -342,18 +536,22 @@ writes `server-catalogs.json` again.
 
 ### Commands
 
-| Command                       | What it does                                                                                    |
-| ----------------------------- | ----------------------------------------------------------------------------------------------- |
-| `script/db-up`                | Starts the local Supabase Postgres alone (port 54330, database `postgres`) and prints the URLs  |
-| `script/db-migrate`           | Applies the migrations in `supabase/migrations/` that the local database does not have yet      |
-| `script/db-reset`             | Recreates the local database and applies every migration from zero                              |
-| `script/api-dev`              | Runs the API against the local database as `devtab_api`, signing with a local test key          |
-| `script/sqlx-prepare`         | Writes the queries' offline data, `.sqlx/`, from the local database (`--check` compares)        |
-| `script/contract-sync <path>` | Copies the extension's side of the contracts into `contract/*-v1/` (`--check` compares)         |
-| `script/gen`                  | Writes `contract/internal-openapi.json` and `src/lib/api/schema.gen.ts` (`--check` compares)    |
-| `pnpm test:contract`          | The contract tests on the extension's side: tokens and catalogues through the copied modules    |
-| `script/api-check`            | fmt, clippy with `-D warnings`, the tests (with the database), the `.sqlx/` check, `cargo deny` |
-| `script/check-all`            | `pnpm check`, `script/gen --check`, `pnpm test:contract`, `script/api-check`: what CI checks    |
+| Command                       | What it does                                                                                                            |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `script/db-up`                | Starts the local Supabase Postgres alone (port 54330, database `postgres`) and prints the URLs                          |
+| `script/db-migrate`           | Applies the migrations in `supabase/migrations/` that the local database does not have yet                              |
+| `script/db-reset`             | Recreates the local database and applies every migration from zero                                                      |
+| `script/api-dev`              | Runs the API against the local database as `devtab_api`, signing with a local test key                                  |
+| `script/auth-up`              | Starts the local stack for sign-in: Postgres, Auth, the gateway on 54332 and the mail catcher on 54334                  |
+| `script/site-server`          | Runs the built site's server on 127.0.0.1:4321 with the API and, when the stack runs, sign-in                           |
+| `node script/e2e-sign-in.ts`  | Signs in end to end against the running stack, API and site: the code and the link of a real local mail                 |
+| `script/sqlx-prepare`         | Writes the queries' offline data, `.sqlx/`, from the local database (`--check` compares)                                |
+| `script/contract-sync <path>` | Copies the extension's side of the contracts into `contract/*-v1/` (`--check` compares)                                 |
+| `script/gen`                  | Writes `contract/internal-openapi.json` and `src/lib/api/schema.gen.ts` (`--check` compares)                            |
+| `pnpm test:contract`          | The contract tests on the extension's side: tokens and catalogues through the copied modules                            |
+| `script/api-check`            | fmt, clippy with `-D warnings`, the tests (with the database), the `.sqlx/` check, `cargo deny`                         |
+| `script/check-migrations`     | Fails when a migration of `origin/main` (or another base) was edited, renamed or deleted                                |
+| `script/check-all`            | `pnpm check`, `script/gen --check`, `pnpm test:contract`, `script/check-migrations`, `script/api-check`: what CI checks |
 
 ```bash
 script/db-up
@@ -372,7 +570,8 @@ anew.
 `DEVTAB_PUBLIC_ADDR`, `DEVTAB_INTERNAL_ADDR` move the listeners (for example
 when 8080 or 8081 is taken); `devtab-api healthcheck` reads the same
 `DEVTAB_PUBLIC_ADDR`. The database tests (`api/tests/db.rs`, `v1.rs`,
-`admin.rs`, `jobs.rs`, `plans.rs`) run when `DEVTAB_TEST_DATABASE_URL` names a database
+`admin.rs`, `jobs.rs`, `plans.rs`, and those of `auth.rs` that need people)
+run when `DEVTAB_TEST_DATABASE_URL` names a database
 with the migrations applied; `script/api-check` points it at the local one,
 plain `cargo test` skips them with a note. They act as the API role and
 remove what they create.
@@ -384,11 +583,17 @@ Supabase project's stack. The CLI publishes them on every interface of the
 machine, not only the loopback address, and the owner's password is the
 CLI's well-known default: keep the machine's firewall on.
 
-So far the scripts start Postgres alone. Auth, the Data API, Studio and the
-mail catcher are a dozen more containers, needed once sign-in is built:
-`supabase start` starts the whole stack (`supabase status` then lists its
-URLs; Studio on http://127.0.0.1:54333). Auth allows e-mail sign-in only; no
-external provider is configured.
+`script/db-up` starts Postgres alone, which is all the API's checks need.
+`script/auth-up` adds what sign-in needs: Auth, the gateway and the mail
+catcher (not Studio, the Data API or the other services). Auth allows e-mail
+sign-in only, by link or one-time code, with its mail
+`supabase/templates/sign_in.html`; no external provider and no captcha are
+configured. It signs access tokens with an ES256 key of this machine:
+`supabase/config.toml` names `.state/supabase/signing-keys.json`, which
+`script/lib/supabase.sh` makes on first use (`supabase gen signing-key`,
+mode 600; the CLI refuses to start without the file) and which is never
+committed; Auth publishes its public half in the JWKS. Run the CLI through
+the scripts, or make that file first, on a fresh clone.
 
 Nobody runs `supabase login`, `supabase link`, `supabase db push` or any
 other command that talks to a hosted project without the owner's word.
@@ -440,8 +645,14 @@ of date.
 `supabase/migrations/<timestamp>_<name>.sql`, applied in order by the
 Supabase CLI and recorded in the database; `supabase migration new <name>`
 creates the next file. They only go forward: an applied migration is never
-edited or deleted. Every object a migration creates in `app` gets row level
-security, and nothing in `app` is granted to the Data API's roles. So far:
+edited or deleted. The CLI records a migration by its version alone and would
+not notice an edited one, so `script/check-migrations [<base>]` (in
+`script/check-all` and CI) fails when a file that the base (`origin/main`;
+in CI the pull request's target or the commit before a push to `main`)
+already has was edited, renamed or deleted, or when a new file does not sort
+after the base's last one; uncommitted files count. Every object a migration
+creates in `app` gets row level security, and nothing in `app` is granted to
+the Data API's roles. So far:
 the schema and the API role; `app.users` with its trigger on `auth.users` and
 the two lookups by e-mail address; `app.plans`; licences, installations,
 customers, the job queue and the admin record; the plans' texts and prices and
@@ -478,6 +689,8 @@ customers, the job queue and the admin record; the plans' texts and prices and
 | `DEVTAB_SITE_URL`                         | `https://web.example.invalid` in `dev`               | required outside `dev`: `https://<host>`, checkout, manage    |
 | `DEVTAB_PAYMENTS`                         | `fake` in `dev`; none otherwise                      | provider whose prices are served; `fake` refused in `prod`    |
 | `DEVTAB_PLANS_MAX_AGE`                    | `86400`                                              | `maxAge` of `GET /v1/plans`, 3600 to 604800 seconds           |
+| `DEVTAB_SUPABASE_URL`                     | none in `dev`; required otherwise                    | the project (`script/api-dev`: http://127.0.0.1:54332): JWKS  |
+| `DEVTAB_JWT_ISSUER`                       | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | the access tokens' `iss`                                      |
 
 Logs are compact lines in `dev` and JSON lines in `staging` and `prod`. They
 carry a licence id and the first four characters of an installation id;
@@ -498,11 +711,12 @@ api/src/http/             routers, middleware, the error shape, /v1/*, the plans
                           OpenAPI description, CORS, rate limits, health checks
 api/src/licence/          keys, secrets, the token and its signing, activation, refresh, seats
 api/src/plans/            the plans file, its sync, currencies, the catalogue the endpoints answer
+api/src/auth/             signed-in people: access tokens against the JWKS, the CurrentUser extractor
 api/src/payments/         the payment provider's interface and the fake provider
 api/src/store/            the Postgres pool and the queries, a module for each of the tables
 api/src/jobs/             the scheduler and its task under an advisory lock
 api/src/admin.rs          the admin commands
-api/tests/                HTTP, database, /v1/*, plans, admin, scheduler, start-up and contract tests;
+api/tests/                HTTP, database, /v1/*, plans, sign-in, admin, scheduler, start-up and contract tests;
                           fixtures/plans/ (a test catalogue)
 .sqlx/                    the queries' offline data (script/sqlx-prepare)
 config/                   signing-keys.json (published public keys), plans.toml (the plans' catalogue)
@@ -510,10 +724,12 @@ contract/licence-v1/      the licence contract: schemas, errors, vectors, the co
 contract/plans-v1/        the plans contract: the answer's schema, server catalogues, the copied reader, its test
 contract/internal-openapi.json  the internal listener's OpenAPI document (script/gen)
 supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
+supabase/templates/       the sign-in mail (link and code, English and Russian)
 supabase/migrations/      SQL migrations, forward only
-script/                   db-up, db-migrate, db-reset, api-dev, api-check, check-all, sqlx-prepare,
-                          contract-sync, gen; lib/supabase.sh
-.github/workflows/ci.yml  CI: secret scan, the site and the contract tests, the API and the generated files
+script/                   db-up, db-migrate, db-reset, auth-up, api-dev, site-server, api-check, check-all,
+                          check-migrations, sqlx-prepare, contract-sync, gen, e2e-sign-in.ts; lib/supabase.sh
+.github/workflows/ci.yml  CI: secret scan, the site and the contract tests, the migrations check, the API and the
+                          generated files, sign-in end to end
 ```
 
 ## Licence

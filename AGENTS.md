@@ -23,11 +23,15 @@ pnpm check      # type check, lint, format check, build, tests: run before every
 script/db-up          # the local Supabase Postgres alone, migrations applied
 script/db-migrate     # the migrations it does not have yet
 script/api-dev        # the API on :8080 and 127.0.0.1:8081, signing with a local test key
+script/auth-up        # the local stack for sign-in: + Auth, the gateway, the mail catcher (stop it after)
+script/site-server    # the built site's server on 127.0.0.1:4321, with sign-in when the stack runs
+node script/e2e-sign-in.ts  # sign-in end to end against the running stack, API and site
 script/sqlx-prepare   # .sqlx/ from the local database, after changing a query or a migration
 script/gen            # contract/internal-openapi.json and src/lib/api/schema.gen.ts from the
                       # API's code, after changing an internal route or its bodies
 pnpm test:contract    # the licence and plans contracts on the extension's side
-script/check-all      # pnpm check + script/gen --check + pnpm test:contract + script/api-check:
+script/check-migrations  # fails when an applied migration (one origin/main has) changed
+script/check-all      # pnpm check + script/gen --check + pnpm test:contract + script/check-migrations + script/api-check:
                       # before every commit touching api/, supabase/, config/, contract/ or .sqlx/
 ```
 
@@ -137,12 +141,19 @@ any default attribution a tool adds:
   serves. What is particular to a provider lives in `api/src/payments/`
   only.
 - The database and the users are Supabase's: Postgres and Supabase Auth.
-  Locally that is the Supabase CLI's stack (`supabase/config.toml`); the
-  scripts start Postgres alone until sign-in needs more.
+  Locally that is the Supabase CLI's stack (`supabase/config.toml`):
+  `script/db-up` starts Postgres alone, `script/auth-up` adds Auth, the
+  gateway and the mail catcher for sign-in. Start the full stack only when
+  you need it and stop it after: its ports are on every interface.
+- The API trusts a signed-in person only through `CurrentUser`: a Supabase
+  access token checked against the project's JWKS (ES256/RS256, `iss`,
+  `aud`, `exp` by the `Clock`, a UUID `sub`), never an id from a body, a
+  query or another header. Local Auth signs with an ES256 key of this machine
+  in the ignored `.state/supabase/`; never commit it.
 - Migrations live in `supabase/migrations/<timestamp>_<name>.sql` and are
   applied by the Supabase CLI. They only go forward: never edit or delete an
-  applied one; a destructive change is expand, migrate, contract over
-  separate releases. Row level security is enabled on everything a
+  applied one (`script/check-migrations` fails on it); a destructive change
+  is expand, migrate, contract over separate releases. Row level security is enabled on everything a
   migration creates in `app`.
 - Schema `app` is reachable only by the API, as `devtab_api`, directly over
   Postgres. It is never listed in the Data API's schemas, and nothing in it
@@ -173,13 +184,31 @@ any default attribution a tool adds:
   fails the type check, the build and the tests. Never fall back to English
   at run time.
 - A page is written once, in `src/pages/[...locale]/`, and listed in
-  `src/lib/pages.ts`; never fork a page per locale.
+  `src/lib/pages.ts` (prerendered) or `src/lib/serverPages.ts` (rendered by
+  the server); never fork a page per locale.
+- The texts of the server's pages are not the owner's yet (README,
+  "Texts awaiting the owner"): the specifications' words, otherwise the
+  shortest factual text, kept under their page's key. Never invent copy,
+  claims or prices; the plans' own texts are data, from the API.
 - The wordmark is `src/i18n/wordmark.ts`. Do not invent a product name, a
   tagline or a logo; the product has no display name yet.
 
 ## The site
 
-- Static output, no client-side JavaScript unless a page needs it.
+- Pages are prerendered (`output: 'static'`); only a page that needs the
+  server opts out with `export const prerender = false`, and the Node
+  adapter's server renders it. No client-side JavaScript unless a page needs
+  it; sign-in is plain forms posting to the site's own endpoints.
+- The site's server holds no secret: it reads only the variables
+  `tests/no-secrets.test.ts` allows (public values and a rate limit) and
+  never Supabase's secret key. It reads the session only on pages marked
+  `session` in `src/lib/serverPages.ts`; a cacheable page never sets a
+  cookie. Which sign-in methods to offer is the owner's decision: e-mail
+  only until then.
+- The content security policy (`security.csp` in `astro.config.mjs`) stays
+  `default-src 'self'`, `form-action 'self'`, `object-src 'none'`,
+  `base-uri 'self'`; never add another host to it. No `style` attributes and
+  no scripts of a page's own in its markup: the policy blocks them.
 - No analytics, no third-party scripts, no fonts or assets from other hosts;
   `pnpm test` checks the build for references to other hosts.
 - Colours, radius and type faces come only from `src/styles/tokens.css`,
