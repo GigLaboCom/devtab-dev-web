@@ -75,11 +75,14 @@ does). It proves that:
   stub (`node:http`) of the API's internal listener (the plans of
   `tests/fixtures/internal-plans.json`) and of Supabase Auth, with the same
   checks of language, canonical URL, alternates, switch and policy, and no
-  script; `/pro/` shows what the catalogue says; the sign-in forms ask Supabase
-  Auth for the mail, keep `next` to the site, refuse a form from another site
-  and count attempts per address (`tests/server.test.ts`);
-- the site's code reads only public values and a rate limit from its
-  environment and never names Supabase's secret key, and neither does the
+  script; `/pro/` shows what the catalogue says; the forms of every sign-in
+  method (the mail's link and code, a password with sign-up and reset,
+  Google) ask Supabase Auth what they should, keep `next` to the site, refuse
+  a form from another site and count attempts per address, and a method that
+  is off is neither shown nor served (`tests/server.test.ts`, with more
+  servers for fewer methods);
+- the site's code reads only public values (the sign-in methods among them)
+  and a rate limit from its environment and never names Supabase's secret key, and neither does the
   build (`tests/no-secrets.test.ts`).
 
 ## Layout
@@ -96,14 +99,14 @@ src/lib/serverPages.ts    every localised page the server renders, by id: path, 
 src/lib/site.ts           the site's address
 src/lib/price.ts          a plan's price as the page shows it
 src/lib/api/client.ts     the server's calls to the API's internal listener, as the signed-in person
-src/lib/auth/             sign-in's settings, the Supabase server client, the pending address, attempts
+src/lib/auth/             sign-in's settings and methods, the Supabase server client, the pending addresses, attempts
 src/middleware.ts         reads the session on the pages that need it
 src/env.d.ts              what the middleware gives a page (`locals.auth`)
 src/lib/api/schema.gen.ts the internal API's types, written by script/gen
 src/layouts/              <html lang>, title, canonical URL, alternates
-src/components/           the header and the language switch
-src/pages/[...locale]/    the localised pages; pro/ and sign-in are rendered by the server
-src/pages/auth/           the sign-in forms' endpoints: sign-in, callback, signout
+src/components/           the header, the language and theme switches; auth/: the sign-in pages' card, Google link
+src/pages/[...locale]/    the localised pages; pro/ and the sign-in pages are rendered by the server
+src/pages/auth/           the sign-in endpoints: sign-in (mail), password, google, callback, signout
 src/pages/                404, robots.txt, sitemap.xml
 src/styles/tokens.css     the design tokens (placeholders)
 tests/                    node:test, from the sources and from the build (dist/client/)
@@ -132,9 +135,10 @@ tests/                    node:test, from the sources and from the build (dist/c
 
 ### Texts awaiting the owner
 
-The texts of the pages the server renders (`pages.pro`, `pages.signIn`) and
-of the sign-in mail (`supabase/templates/sign_in.html`, and its subject in
-`supabase/config.toml`) are not the owner's yet: they are the specifications' words where those give any,
+The texts of the pages the server renders (`pages.pro`, `pages.signIn`,
+`pages.signUp`, `pages.forgotPassword`, `pages.resetPassword`) and of Auth's
+mails (`supabase/templates/sign_in.html` and `recovery.html`, and their
+subjects in `supabase/config.toml`) are not the owner's yet: they are the specifications' words where those give any,
 otherwise the shortest factual text, and the English catalogue says so. They
 stay together under their page's key, so that the owner approves or replaces
 them in one place. No marketing copy and no claim about the product beyond
@@ -208,10 +212,21 @@ an available plan's link would lead to the 404.
 ### Signing in
 
 `/sign-in/` (and `/ru/sign-in/`) signs a person in to an account of the site,
-which Supabase Auth keeps, by e-mail only: no other way is offered until the
-owner chooses one, and no captcha. It works without client-side JavaScript:
-plain forms post to `/auth/sign-in/`, which calls Supabase Auth from the
-server and answers 303.
+which Supabase Auth keeps. The methods are the owner's choice; which of
+them a deployment offers is its setting, `DEVTAB_SIGN_IN_METHODS`
+(comma-separated; unset: `email`):
+
+| Method     | What the person does                                                      | Pages and endpoints                                                                       |
+| ---------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `email`    | gets a mail with a sign-in link and a one-time code                       | `/sign-in/`; `POST /auth/sign-in/`                                                        |
+| `password` | signs in with an address and a password; signs up; resets a lost password | `/sign-in/`, `/sign-up/`, `/forgot-password/`, `/reset-password/`; `POST /auth/password/` |
+| `google`   | continues with a Google account                                           | a link on `/sign-in/` and `/sign-up/`; `GET /auth/google/`                                |
+
+A method left out is not shown, and its pages and endpoints answer 404; with
+none that the site knows, the page says that sign-in is not available. No
+captcha. Everything works without client-side JavaScript: plain forms post
+to the endpoints, which call Supabase Auth from the server and answer 303,
+an error coming back as `?error=<code>`, which the page words.
 
 1. The e-mail form: Supabase Auth sends one mail
    (`supabase/templates/sign_in.html`) with a link and a one-time code. The
@@ -221,7 +236,26 @@ server and answers 303.
    that browser) and comes back to `/auth/callback/`, which exchanges its code
    for the session; opened elsewhere it comes back with "enter the code
    instead". The code works anywhere: the code form checks it.
-3. The session lives in cookies that `@supabase/ssr` manages, `HttpOnly` and
+3. A password: signing up asks Supabase Auth for the account, which sends
+   the same mail to confirm the address (its link back to `/auth/callback/`,
+   its code on the sign-in page, as above); until then the password does not
+   sign in. A forgotten password: `/forgot-password/` sends a reset mail
+   (`supabase/templates/recovery.html`) with a link back to
+   `/auth/callback/?via=recovery` and a code that page takes (its address
+   waits in `devtab-reset-address`). Either one starts a session and marks
+   it, by its id, in `devtab-reset` (an hour): only that session may set the
+   new password on `/reset-password/`; any other sees "ask for a new
+   e-mail". Passwords are checked by Supabase Auth (its length and
+   character rules); the site asks for the new one twice and never logs it.
+4. Google: a link (not a form: the policy's `form-action 'self'` would stop a
+   form's redirect to Google) to `/auth/google/`, which asks Supabase Auth
+   for the provider's address with a PKCE verifier in a cookie and answers
+   303 there; Google comes back through Supabase Auth to
+   `/auth/callback/?via=google`, with the page's language and `next`. It
+   starts only from the site's own pages (`Sec-Fetch-Site`). No script, font
+   or image comes from Google: the button is text and an outline of the
+   letter.
+5. The session lives in cookies that `@supabase/ssr` manages, `HttpOnly` and
    `SameSite=Lax` (no script reads them). `src/middleware.ts` reads it only
    on the pages that need it (those of `serverPages` marked `session`, and
    `/auth/*`), verifying the token with `getClaims()` against the project's
@@ -229,16 +263,49 @@ server and answers 303.
    session cookie is set on a response a cache may keep. A page reads the
    person as `locals.auth`, and `src/lib/api/client.ts` passes their access
    token to the API as `Authorization: Bearer …`.
-4. Signed in, the page shows who and offers signing out
+6. Signed in, the page shows who and offers signing out
    (`POST /auth/signout/`). `?next=<path of this site>` sends a signed-in
-   person there, and the forms carry it through the sign-in; anything but a
-   path of this site is dropped. The account's own page comes later.
+   person there, and the forms and links carry it through every method;
+   anything but a path of this site is dropped. The account's own page comes
+   later.
 
 Astro's origin check refuses a form posted from another site. Each client
-address may try 10 times an hour (`DEVTAB_RATE_SIGN_IN_PER_IP`, counted in
-the server's memory, before Supabase Auth's own limits). The pages are never
-cached and never indexed. The site holds no secret: only the project's
-address and its publishable key, which anyone may see.
+address may try 10 times an hour, all methods together
+(`DEVTAB_RATE_SIGN_IN_PER_IP`, counted in the server's memory, before
+Supabase Auth's own limits). The pages are never cached and never indexed.
+The site holds no secret: only the project's address and its publishable
+key, which anyone may see.
+
+#### What a deployment sets in Supabase
+
+The site only chooses among the methods; Supabase Auth must allow the ones
+it offers. Locally `supabase/config.toml` does; a hosted project sets the
+same in its dashboard (Authentication), and nothing of it is in the site's
+environment:
+
+- **Redirect URLs**: the site's `https://<site>/auth/callback/**`, so that
+  the mails' links and Google come back to it.
+- **E-mail** (`email`, `password`): sign-ups on, "Confirm email" on (a
+  password signs in only once its address is confirmed), the code's length
+  6, and the three mail templates of `supabase/templates/` (magic link and
+  confirmation: `sign_in.html`; reset password: `recovery.html`) with their
+  subjects.
+- **Sender**: Auth's mails go out through the project's SMTP server, which
+  says who sends them, its address and name: locally `[auth.email.smtp]`,
+  off (every mail goes to the mail catcher) unless
+  `SUPABASE_AUTH_EMAIL_SMTP_ENABLED=true` and the server's
+  `SUPABASE_AUTH_EMAIL_SMTP_HOST`, `_PORT`, `_USER`, `_PASS`, the sender's
+  address `_ADMIN_EMAIL` (for example `no-reply@example.invalid`) and name
+  `_SENDER_NAME` are in the environment; hosted, Authentication, SMTP.
+- **Google** (`google`): the Google provider on, with the client id and
+  secret of an OAuth client of a Google Cloud project, whose authorised
+  redirect URI is the project's `<Supabase URL>/auth/v1/callback`. Locally
+  `[auth.external.google]`, off unless
+  `SUPABASE_AUTH_EXTERNAL_GOOGLE_ENABLED=true`,
+  `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and
+  `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET` are in the environment of
+  `script/auth-up`; hosted, Authentication, Providers. The client id and
+  secret are never in this repository or the site's environment.
 
 ### Run it locally
 
@@ -259,16 +326,22 @@ machine. `script/site-server` then reads the stack's publishable key from
 script/auth-up                      # the stack's containers; the first start pulls two images
 script/api-dev                      # checks access tokens against the stack's JWKS
 pnpm build && script/site-server    # http://127.0.0.1:4321/sign-in/; mails at http://127.0.0.1:54334
-node script/e2e-sign-in.ts          # sign in by the code and by the link, end to end
+node script/e2e-sign-in.ts          # sign in by the code, the link and a password, end to end
 supabase --workdir . stop           # stop the stack when done: its ports are on every interface
 ```
 
+`script/site-server` offers the e-mail and passwords
+(`DEVTAB_SIGN_IN_METHODS=email,password` unless set), which the local stack
+serves on its own; Google needs a client (above).
 `script/e2e-sign-in.ts` starts and stops nothing: it posts the forms, reads
 the mail from Mailpit, signs in by its code, checks that the API accepts the
 session's access token (and refuses none or a forged one), signs out, then
 signs in by the link in the same browser and shows that the link fails in
-another. It prints tokens and codes masked and leaves its two
-`…@example.invalid` accounts in the local database.
+another. When the site offers passwords it then signs up with one, confirms
+the address by the mail's code, signs in with the password, and resets it
+by the code and by the link of a reset mail. It prints tokens and codes
+masked and leaves its three `…@example.invalid` accounts in the local
+database.
 
 ### The site's configuration
 
@@ -281,6 +354,7 @@ The server reads it when it runs; every value is public.
 | `DEVTAB_SUPABASE_URL`             | none                    | the Supabase project, as the browser reaches it; with the key  |
 | `DEVTAB_SUPABASE_PUBLISHABLE_KEY` | none                    | its publishable key; without both, sign-in is off              |
 | `DEVTAB_RATE_SIGN_IN_PER_IP`      | `10`                    | sign-in attempts an hour, by client address                    |
+| `DEVTAB_SIGN_IN_METHODS`          | `email`                 | the sign-in methods offered: `email`, `password`, `google`     |
 | `DEVTAB_EXTENSION_IDS`            | none                    | the extension builds `/pro/connect/` talks to, comma-separated |
 
 ## Content security policy
@@ -731,10 +805,11 @@ CLI's well-known default: keep the machine's firewall on.
 
 `script/db-up` starts Postgres alone, which is all the API's checks need.
 `script/auth-up` adds what sign-in needs: Auth, the gateway and the mail
-catcher (not Studio, the Data API or the other services). Auth allows e-mail
-sign-in only, by link or one-time code, with its mail
-`supabase/templates/sign_in.html`; no external provider and no captcha are
-configured. It signs access tokens with an ES256 key of this machine:
+catcher (not Studio, the Data API or the other services). Auth allows
+e-mail sign-in by link or one-time code and by password (a new address
+confirmed by its mail first), with its mails `supabase/templates/sign_in.html`
+and `recovery.html`; Google is configured but off unless the environment
+turns it on (above, "What a deployment sets in Supabase"); no captcha. It signs access tokens with an ES256 key of this machine:
 `supabase/config.toml` names `.state/supabase/signing-keys.json`, which
 `script/lib/supabase.sh` makes on first use (`supabase gen signing-key`,
 mode 600; the CLI refuses to start without the file) and which is never
@@ -886,7 +961,7 @@ contract/licence-v1/      the licence contract: schemas, errors, vectors, the co
 contract/plans-v1/        the plans contract: the answer's schema, server catalogues, the copied reader, its test
 contract/internal-openapi.json  the internal listener's OpenAPI document (script/gen)
 supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
-supabase/templates/       the sign-in mail (link and code, English and Russian)
+supabase/templates/       Auth's mails: sign-in or confirmation, password reset (link and code, English and Russian)
 supabase/migrations/      SQL migrations, forward only
 script/                   db-up, db-migrate, db-reset, auth-up, api-dev, site-server, api-check, check-all,
                           check-migrations, sqlx-prepare, contract-sync, gen, e2e-sign-in.ts; lib/supabase.sh
