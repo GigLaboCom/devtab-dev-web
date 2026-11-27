@@ -36,6 +36,26 @@ jobs:
       - name: Secrets in the git history
         run: gitleaks git --config .gitleaks.toml --redact --no-banner --verbose .
 
+  # Applied migrations are never edited, renamed or deleted; new ones sort
+  # last. The base is the pull request's target branch, or on a push to main
+  # the commit before it: the whole history is fetched to find it.
+  migrations:
+    name: migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: No applied migration changed
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          # The first push of a branch has no commit before it.
+          if [[ "$BASE" =~ ^0+$ ]]; then BASE=HEAD; fi
+          script/check-migrations "$BASE"
+
   site:
     name: site
     runs-on: ubuntu-latest
@@ -76,6 +96,13 @@ jobs:
       - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
         with:
           version: 2.54.11
+      # supabase/config.toml names Auth's signing key, made per run in the
+      # ignored .state/ (the CLI refuses to start without the file).
+      - name: Auth's signing key for this run
+        run: |
+          mkdir -p .state/supabase
+          printf '[]\n' > .state/supabase/signing-keys.json
+          supabase gen signing-key --algorithm ES256 --append
       # Postgres of the local stack (supabase/config.toml), no other service.
       - name: Start Supabase (Postgres only)
         run: supabase db start
@@ -122,3 +149,53 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: The generated files are current
         run: script/gen --check
+
+  # Sign-in end to end (script/e2e-sign-in.ts): the local stack with Auth and
+  # the mail catcher, the API checking access tokens against its JWKS, the
+  # built site's server; a code and a link from a real mail of the local Auth.
+  sign-in:
+    name: sign-in
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SUPABASE_TELEMETRY_DISABLED: '1'
+      DO_NOT_TRACK: '1'
+      SQLX_OFFLINE: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: 2.54.11
+      - name: Rust toolchain from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+        with:
+          cache: false
+          rustflags: ''
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Enable corepack (pnpm from packageManager)
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      # Postgres, Auth, the gateway and the mail catcher; the signing key is made here.
+      - name: Start the local stack for sign-in
+        run: script/auth-up
+      - run: cargo build --locked -p devtab-api
+      - run: pnpm build
+      - name: Start the API and the site's server
+        run: |
+          script/api-dev > "$RUNNER_TEMP/api.log" 2>&1 &
+          script/site-server > "$RUNNER_TEMP/site.log" 2>&1 &
+          for _ in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8081/internal/healthz >/dev/null 2>&1 &&
+              curl -fsS -o /dev/null http://127.0.0.1:4321/sign-in/; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/api.log" "$RUNNER_TEMP/site.log"
+          exit 1
+      - name: Sign in by the code and by the link
+        run: node script/e2e-sign-in.ts
