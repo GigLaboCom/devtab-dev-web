@@ -50,7 +50,7 @@ name = "Annually"
 summary = "Pro, billed once a year."
 includes = ["Everything in Monthly"]
 price_note = "Tax calculated at checkout."
-badge = "Save with a year"
+badge = "Save 33%"
 [[plan.prices]]
 provider = "stripe"
 lookup_key = "devtab-pro-annual"
@@ -67,7 +67,7 @@ interval = "month"
 seats = 3
 sort = 4
 available = true
-min_members = 2
+min_members = 5
 [plan.texts.en]
 name = "Team, monthly"
 summary = "Pro for each member of a team, billed every month."
@@ -84,12 +84,13 @@ interval = "year"
 seats = 3
 sort = 5
 available = true
-min_members = 2
+min_members = 5
 [plan.texts.en]
 name = "Team, annually"
 summary = "Pro for each member of a team, billed once a year."
 includes = ["Everything in Team, monthly"]
 price_note = "Per member. Tax calculated at checkout."
+badge = "Save 30%"
 [[plan.prices]]
 provider = "stripe"
 lookup_key = "devtab-team-annual"
