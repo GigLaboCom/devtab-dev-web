@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "The site's backend API"
 edition.workspace = true
 rust-version.workspace = true
+license-file.workspace = true
 publish.workspace = true
 
 [lints]

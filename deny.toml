@@ -35,7 +35,8 @@ allow = [
 confidence-threshold = 0.9
 unused-allowed-license = "allow"
 
-# The workspace's own crates are not published and carry no licence yet.
+# The workspace's own crates are not published; their licence (LICENSE.md, FCL-1.0-ALv2) is not in the list above,
+# which is for dependencies.
 [licenses.private]
 ignore = true
 

@@ -5,7 +5,8 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-# No `license` yet: the repository has none chosen.
+# Fair Core License (FCL-1.0-ALv2): the text is the repository's LICENSE.md.
+license-file = "LICENSE.md"
 publish = false
 
 [workspace.lints.rust]

@@ -896,4 +896,19 @@ script/                   db-up, db-migrate, db-reset, auth-up, api-dev, site-se
 
 ## Licence
 
-None chosen yet: the repository has no licence file.
+The source is available under the
+[Fair Core License, Version 1.0, ALv2 Future License](LICENSE.md)
+(`FCL-1.0-ALv2`), the same licence as the extension. It is not an open source
+licence. In short, and the licence itself is what counts:
+
+- You may read, build, use and change the code for any purpose except a
+  competing one: you may not offer it, or a product made from it, to others as
+  a commercial product or service that replaces this one or does substantially
+  the same.
+- You may not remove, change or get around a licence key check that protects
+  paid features.
+- Each version becomes available under the Apache License, Version 2.0 two
+  years after it is published.
+
+The name DevTab.Dev, its icons and the site's texts and images are not
+licensed.
