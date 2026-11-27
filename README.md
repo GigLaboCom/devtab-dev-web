@@ -480,10 +480,14 @@ each secret is a file the setting names.
   The purchase pages will have to widen the content security policy for
   Stripe: `form-action` for its checkout and portal hosts when a form posts
   there, and Stripe.js and its frames for the embedded form.
-- **Webhooks.** The signature check is in place
-  (`api/src/payments/stripe/webhook.rs`: `t` and every `v1`, HMAC-SHA256 with
-  the destination's secret over the raw body, the tolerance, the mode); the
-  endpoint that receives them comes with the purchase.
+- **Webhooks.** `POST /api/webhooks/stripe` on the public listener (the
+  site's host routes `/api/*` there; bodies up to 256 KB). The signature is
+  checked on the raw body (`api/src/payments/stripe/webhook.rs`: `t` and every
+  `v1`, HMAC-SHA256 with the destination's secret, the tolerance, the mode); a
+  mismatch is 400 `signature`. A valid event is stored once in
+  `app.provider_events` (a repeated delivery is answered 200 at once), a
+  `process_event` job is queued in the same transaction, and the answer is 200
+  before any processing.
 - **API.** REST over rustls with the Mozilla roots built in, the version
   pinned by `DEVTAB_STRIPE_API_VERSION` (default `2026-11-18.endive`, nothing
   older than `2026-09-30.endive`), retries on 409, 429 and 5xx as Stripe
@@ -516,6 +520,45 @@ Then `devtab-api admin stripe check --file <plans file>` checks the settings
 and both secrets as `serve` does and finds every Stripe price of the file;
 `admin plans sync --file <plans file>` stores them. `serve` does not start
 with a missing secret, a secret key, or a key of the other mode.
+
+### The purchase
+
+A signed-in person starts a checkout of a plan on sale (`POST
+/internal/checkouts {"plan", "locale"}`: a row in `app.checkouts`, then the
+provider's session; the answer is the provider's page or its embedded form;
+404 `plan-unknown`, 409 `plan-unavailable`, 503 `payments-unavailable`). The
+provider returns the buyer to `<DEVTAB_SITE_URL>[/<locale>]/pro/thanks/?ref=<checkout>`,
+which reads `GET /internal/checkouts/{id}`: `open`, `expired`, or `completed`
+with the key the first time it is asked for within a day, and only to the
+person who started it (anyone else gets 404); `key_hint` after that.
+
+Nothing changes a licence but a verified event. The queue's worker
+(`api/src/jobs/worker.rs`) runs `process_event` (`api/src/payments/process.rs`):
+for each subscription the event names, it reads the subscription's state at
+the provider, never the event's body, and `reconcile`
+(`api/src/payments/reconcile.rs`) decides:
+
+- a licence is issued only from one of our checkouts, when the subscription is
+  active and its current period paid, to the person who started the checkout:
+  the provider's customer is tied to that account (a customer of another
+  account, or a second one of the same, stops it), the key is kept in
+  `app.key_reveals` for a day to be shown once, the checkout is completed;
+- `paid_until` moves to the period's end only while the period's invoice is
+  paid; the first overdue state sets `past_due_since`, a paid period clears
+  it; cancelling at the period's end keeps the licence active; an ended or
+  paused subscription ends it, and resumed and paid makes it active again;
+- a full refund or a lost dispute revokes it (`refund`); a partial refund or
+  an open dispute changes nothing; a revoked licence stays revoked;
+- a price no plan has, or a paid subscription with no checkout of ours, stops
+  the event for someone to look at.
+
+Each subscription is handled under a transaction-scoped advisory lock, so two
+events of one purchase processed at once issue one licence. A failed job is
+tried again after 1, 5 and 30 minutes, 2, 6 and 24 hours, then given up and
+logged as an error with its event marked `failed`; an error that retrying
+cannot help is given up at once. Still to come: the mail with the key, the
+site's purchase and return pages, the daily reconciliations, changing plans
+and the customer portal.
 
 ### The internal API's types
 
@@ -789,7 +832,8 @@ api/src/auth/             signed-in people: access tokens against the JWKS, the 
 api/src/payments/         the payment provider's interface, the fake provider and Stripe (settings' secrets, REST
                           client, prices, checkout, portal, webhook signatures)
 api/src/store/            the Postgres pool and the queries, a module for each of the tables
-api/src/jobs/             the scheduler and its task under an advisory lock
+api/src/jobs/             the queue's worker (process_event, retries) and the scheduler with its task under an
+                          advisory lock
 api/src/admin.rs          the admin commands
 api/tests/                HTTP, database, /v1/*, plans, sign-in, admin, scheduler, start-up and contract tests;
                           fixtures/plans/ (a test catalogue)
