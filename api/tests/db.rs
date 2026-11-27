@@ -182,13 +182,14 @@ async fn set_updated_at_exists_and_only_the_api_role_may_run_it() {
 }
 
 /// Every table the migrations create in `app`.
-const TABLES: [&str; 13] = [
+const TABLES: [&str; 14] = [
     "admin_audit",
     "checkouts",
     "customers",
     "installations",
     "jobs",
     "key_reveals",
+    "licence_members",
     "licences",
     "plan_prices",
     "plan_texts",
@@ -445,6 +446,7 @@ async fn subscription(tx: &mut PgConnection, user: Uuid, customer: Uuid) -> Uuid
     licences::insert(
         tx,
         &NewLicence {
+            members: 1,
             lid: &lid,
             user_id: Some(user),
             customer_id: Some(customer),
