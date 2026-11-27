@@ -274,13 +274,14 @@ another. It prints tokens and codes masked and leaves its two
 
 The server reads it when it runs; every value is public.
 
-| Variable                          | Default                 | Note                                                          |
-| --------------------------------- | ----------------------- | ------------------------------------------------------------- |
-| `HOST`, `PORT`                    | `localhost`, `4321`     | where the server listens (`@astrojs/node`)                    |
-| `DEVTAB_API_INTERNAL_URL`         | `http://127.0.0.1:8081` | the API's internal listener                                   |
-| `DEVTAB_SUPABASE_URL`             | none                    | the Supabase project, as the browser reaches it; with the key |
-| `DEVTAB_SUPABASE_PUBLISHABLE_KEY` | none                    | its publishable key; without both, sign-in is off             |
-| `DEVTAB_RATE_SIGN_IN_PER_IP`      | `10`                    | sign-in attempts an hour, by client address                   |
+| Variable                          | Default                 | Note                                                           |
+| --------------------------------- | ----------------------- | -------------------------------------------------------------- |
+| `HOST`, `PORT`                    | `localhost`, `4321`     | where the server listens (`@astrojs/node`)                     |
+| `DEVTAB_API_INTERNAL_URL`         | `http://127.0.0.1:8081` | the API's internal listener                                    |
+| `DEVTAB_SUPABASE_URL`             | none                    | the Supabase project, as the browser reaches it; with the key  |
+| `DEVTAB_SUPABASE_PUBLISHABLE_KEY` | none                    | its publishable key; without both, sign-in is off              |
+| `DEVTAB_RATE_SIGN_IN_PER_IP`      | `10`                    | sign-in attempts an hour, by client address                    |
+| `DEVTAB_EXTENSION_IDS`            | none                    | the extension builds `/pro/connect/` talks to, comma-separated |
 
 ## Content security policy
 
@@ -559,6 +560,24 @@ logged as an error with its event marked `failed`; an error that retrying
 cannot help is given up at once. Still to come: the mail with the key, the
 site's purchase and return pages, the daily reconciliations, changing plans
 and the customer portal.
+
+### Connecting the extension
+
+The licence key stays the way in that always works; the usual way is the
+extension's "Connect with your account" button. It opens `/pro/connect/`
+(signed out: the sign-in page first, and back). The page's script asks the
+extension, through `externally_connectable` (only the site the extension's
+build names may talk to it, and no install warning), for its installation id;
+`POST /auth/connect/` (the site's pages only, a signed-in person only) asks
+`POST /internal/licences/connect` for an activation of the person's licence
+for that installation: the same seat, secret and token as `POST /v1/activate`
+with a key, the licence found by the account (their only usable one, or the
+`lid` named; `no-licence`, `choose-licence`, `seat-limit` otherwise). The page
+hands the answer to the extension, which keeps it only when the token is
+signed, active, for its own installation and the licence named. The
+installation id comes from the extension, never from the address, so no other
+site can make a page take a seat for an installation of its choosing.
+`DEVTAB_EXTENSION_IDS` lists the extension builds the page talks to.
 
 ### The internal API's types
 
