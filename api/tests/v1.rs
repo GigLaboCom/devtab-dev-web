@@ -232,6 +232,7 @@ impl Fixture {
         let id = licences::insert(
             &mut self.owner,
             &NewLicence {
+                members: 1,
                 lid: &lid,
                 user_id: None,
                 customer_id: customer,

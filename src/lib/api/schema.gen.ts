@@ -75,6 +75,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/licences/{lid}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /internal/licences/{lid}/members`. */
+        get: operations["list"];
+        put?: never;
+        /** `POST /internal/licences/{lid}/members`. */
+        post: operations["invite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/licences/{lid}/members/{email}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** `DELETE /internal/licences/{lid}/members/{email}`. */
+        delete: operations["remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/me": {
         parameters: {
             query?: never;
@@ -167,6 +202,10 @@ export interface components {
             /** @description Always `ok`. */
             status: string;
         };
+        /** @description An address to invite. */
+        Invite: {
+            email: string;
+        };
         /**
          * @description The languages of the site's pages.
          * @enum {string}
@@ -182,10 +221,23 @@ export interface components {
              */
             user: string;
         };
+        /** @description One invited address. */
+        Member: {
+            email: string;
+            /** @description The person has signed in with it and connected. */
+            joined: boolean;
+        };
         /** @description A checkout to start. */
         NewCheckout: {
             /** @description The language of the provider's page, the return page and the mail. */
             locale?: components["schemas"]["Locale"];
+            /**
+             * Format: int32
+             * @description A team plan: how many members to start with (its smallest team when
+             *     absent; the buyer may change it on the provider's page). Not for a
+             *     personal plan.
+             */
+            members?: number | null;
             /** @description The plan's id, such as `pro-monthly`. */
             plan: string;
         };
@@ -262,6 +314,12 @@ export interface components {
              *     has none in it.
              */
             locale: string;
+            /**
+             * Format: int32
+             * @description A team plan's smallest team: its price is per member. Null for a
+             *     personal plan.
+             */
+            minMembers: number | null;
         };
         /** @description A started checkout: where to send the buyer, or the form to mount. */
         StartedCheckout: {
@@ -270,6 +328,16 @@ export interface components {
             embedded?: null | components["schemas"]["EmbeddedCheckout"];
             /** @description The provider's page (a hosted checkout); answer it with 303. */
             redirect_url?: string | null;
+        };
+        /** @description A team's members. */
+        Team: {
+            /** @description The invited addresses, at most `members` − 1. */
+            invited: components["schemas"]["Member"][];
+            /**
+             * Format: int32
+             * @description Members bought, the owner included.
+             */
+            members: number;
         };
         /**
          * @description A subscription's billing period.
@@ -465,6 +533,167 @@ export interface operations {
                 };
             };
             /** @description `seat-limit`: every usable licence is full */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The team licence */
+                lid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The team */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No such licence of this person */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `not-a-team` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    invite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The team licence */
+                lid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Invite"];
+            };
+        };
+        responses: {
+            /** @description Invited (or already invited) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not an e-mail address */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No such licence of this person */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `not-a-team`, or `team-full`: every member bought is invited */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The team licence */
+                lid: string;
+                /** @description The member's address */
+                email: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed; the browsers they connected are disconnected */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No such licence of this person, or no such member */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `not-a-team` */
             409: {
                 headers: {
                     [name: string]: unknown;

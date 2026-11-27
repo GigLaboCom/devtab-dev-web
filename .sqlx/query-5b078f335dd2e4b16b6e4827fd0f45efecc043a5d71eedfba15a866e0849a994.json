@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select email, user_id, invited_at from app.licence_members\n         where licence_id = $1 order by invited_at, email",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.licence_members",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.licence_members",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "invited_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.licence_members",
+            "name": "invited_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "5b078f335dd2e4b16b6e4827fd0f45efecc043a5d71eedfba15a866e0849a994"
+}

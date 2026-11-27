@@ -11,6 +11,7 @@ pub mod events;
 pub mod installations;
 pub mod jobs;
 pub mod licences;
+pub mod members;
 pub mod plans;
 pub mod reveals;
 pub mod users;

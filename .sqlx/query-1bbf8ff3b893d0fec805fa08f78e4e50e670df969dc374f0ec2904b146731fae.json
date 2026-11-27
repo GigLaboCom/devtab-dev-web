@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into app.plans (id, kind, \"interval\", seats, sort, available, until, min_members)\n           values ($1, $2, $3, $4, $5, $6, $7, $8)\n           on conflict (id) do update set\n             kind = excluded.kind, \"interval\" = excluded.\"interval\", seats = excluded.seats,\n             sort = excluded.sort, available = excluded.available, until = excluded.until,\n             min_members = excluded.min_members",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Int2",
+        "Bool",
+        "Timestamptz",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1bbf8ff3b893d0fec805fa08f78e4e50e670df969dc374f0ec2904b146731fae"
+}

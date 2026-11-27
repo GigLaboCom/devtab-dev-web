@@ -19,6 +19,9 @@ pub struct PlanRow {
     pub sort: i16,
     pub available: bool,
     pub until: Option<OffsetDateTime>,
+    /// A team plan's smallest team (it is sold per member); none for a
+    /// personal plan.
+    pub min_members: Option<i16>,
 }
 
 /// The texts of a plan's card in one language.
@@ -58,7 +61,7 @@ pub struct NewPrice {
 pub async fn all(db: impl PgExecutor<'_>) -> Result<Vec<PlanRow>, sqlx::Error> {
     sqlx::query_as!(
         PlanRow,
-        r#"select id, kind, "interval", seats, sort, available, until
+        r#"select id, kind, "interval", seats, sort, available, until, min_members
            from app.plans order by sort, id"#,
     )
     .fetch_all(db)
@@ -68,7 +71,7 @@ pub async fn all(db: impl PgExecutor<'_>) -> Result<Vec<PlanRow>, sqlx::Error> {
 pub async fn find(db: impl PgExecutor<'_>, id: &str) -> Result<Option<PlanRow>, sqlx::Error> {
     sqlx::query_as!(
         PlanRow,
-        r#"select id, kind, "interval", seats, sort, available, until
+        r#"select id, kind, "interval", seats, sort, available, until, min_members
            from app.plans where id = $1"#,
         id,
     )
@@ -79,11 +82,12 @@ pub async fn find(db: impl PgExecutor<'_>, id: &str) -> Result<Option<PlanRow>, 
 /// Creates the plan or updates every column of it.
 pub async fn upsert(db: impl PgExecutor<'_>, plan: &PlanRow) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        r#"insert into app.plans (id, kind, "interval", seats, sort, available, until)
-           values ($1, $2, $3, $4, $5, $6, $7)
+        r#"insert into app.plans (id, kind, "interval", seats, sort, available, until, min_members)
+           values ($1, $2, $3, $4, $5, $6, $7, $8)
            on conflict (id) do update set
              kind = excluded.kind, "interval" = excluded."interval", seats = excluded.seats,
-             sort = excluded.sort, available = excluded.available, until = excluded.until"#,
+             sort = excluded.sort, available = excluded.available, until = excluded.until,
+             min_members = excluded.min_members"#,
         plan.id,
         plan.kind,
         plan.interval,
@@ -91,6 +95,7 @@ pub async fn upsert(db: impl PgExecutor<'_>, plan: &PlanRow) -> Result<(), sqlx:
         plan.sort,
         plan.available,
         plan.until,
+        plan.min_members,
     )
     .execute(db)
     .await

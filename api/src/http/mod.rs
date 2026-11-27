@@ -8,6 +8,7 @@ pub mod error;
 pub mod health;
 pub mod internal;
 pub mod json;
+pub mod members;
 pub mod plans;
 pub mod rate_limit;
 pub mod v1;

@@ -121,17 +121,24 @@ struct World {
 
 impl World {
     async fn new(available: bool) -> Option<Self> {
+        Self::with(available, None).await
+    }
+
+    /// A world whose plan is a team plan of at least `min_members`, or a
+    /// personal one.
+    async fn with(available: bool, min_members: Option<i16>) -> Option<Self> {
         let url = support::database_url()?;
         let mut owner = PgConnection::connect(&url).await.unwrap();
         let tag = &Uuid::new_v4().simple().to_string()[..12];
         let plan = format!("buy-{tag}");
         let price = format!("price_{tag}");
         sqlx::query(
-            r#"insert into app.plans (id, kind, "interval", seats, sort, available)
-               values ($1, 'subscription', 'month', 2, 99, $2)"#,
+            r#"insert into app.plans (id, kind, "interval", seats, sort, available, min_members)
+               values ($1, 'subscription', 'month', 2, 99, $2, $3)"#,
         )
         .bind(&plan)
         .bind(available)
+        .bind(min_members)
         .execute(&mut owner)
         .await
         .unwrap();
@@ -189,6 +196,7 @@ impl World {
             id: id.to_owned(),
             status: SubscriptionStatus::Active,
             price_id: self.price.clone(),
+            quantity: 1,
             current_period_end: end,
             cancel_at_period_end: false,
             customer: customer.to_owned(),
@@ -244,6 +252,14 @@ impl World {
     }
 
     async fn clean(mut self) {
+        sqlx::query(
+            "delete from app.licence_members where licence_id in
+               (select id from app.licences where plan_id = $1)",
+        )
+        .bind(&self.plan)
+        .execute(&mut self.owner)
+        .await
+        .unwrap();
         sqlx::query("delete from app.licences where plan_id = $1")
             .bind(&self.plan)
             .execute(&mut self.owner)
@@ -1035,5 +1051,214 @@ async fn the_site_connects_the_signed_in_person_s_extension_without_a_key() {
         connect(buyer_token.clone(), json!({"inst": inst, "lid": lids[0]})).await;
     }
     assert_eq!(active_seats(&mut world.owner, &lids[0]).await, 1);
+    world.clean().await;
+}
+
+// ---- team licences ----
+
+/// The licence `owner` bought for `quantity`: its lid, subscription and the
+/// subscription's state, as the double holds it.
+async fn bought(
+    world: &mut World,
+    double: &Double,
+    owner: Uuid,
+    quantity: u32,
+    now: OffsetDateTime,
+) -> (String, String, SubscriptionSnapshot) {
+    let checkout = world.checkout(owner, now).await;
+    let (sub, cus) = ids();
+    let mut snapshot = world.snapshot(&sub, &cus, now + Duration::days(30));
+    snapshot.quantity = quantity;
+    double.set(snapshot.clone());
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session(checkout, &cus, &sub),
+            now,
+        )
+        .await;
+    world.process(double, event, now).await.unwrap();
+    let lid: String =
+        sqlx::query_scalar("select lid from app.licences where provider_subscription_id = $1")
+            .bind(&sub)
+            .fetch_one(&mut world.owner)
+            .await
+            .unwrap();
+    (lid, sub, snapshot)
+}
+
+async fn size_of(world: &mut World, lid: &str) -> (i32, i32) {
+    sqlx::query_as("select members, seats from app.licences where lid = $1")
+        .bind(lid)
+        .fetch_one(&mut world.owner)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_team_is_bought_per_member_and_its_owner_invites_who_connects() {
+    let Some(mut world) = World::with(false, Some(2)).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let keys = keys();
+    let state = support::api_state(&world.url, shared(&clock), &Config::default())
+        .await
+        .with_auth(Verifier::fixed(
+            &json!({"keys": [keys.jwk]}),
+            ISSUER.to_owned(),
+            shared(&clock),
+        ));
+    let owner = world.person().await;
+    let member_email = format!("member-{}@example.invalid", Uuid::new_v4().simple());
+    let member = support::insert_auth_user(&mut world.owner, &member_email).await;
+    world.people.push(member);
+    let stranger = world.person().await;
+    let (owner_token, member_token, stranger_token) = (
+        token(&keys, owner, &clock),
+        token(&keys, member, &clock),
+        token(&keys, stranger, &clock),
+    );
+
+    // Bought for three members: the plan's two browsers each.
+    let double = Double::default();
+    let (lid, _, _) = bought(&mut world, &double, owner, 3, clock.now()).await;
+    assert_eq!(size_of(&mut world, &lid).await, (3, 6));
+    let path = format!("/internal/licences/{lid}/members");
+    let invite = |token: String, email: String| {
+        let (state, path) = (state.clone(), path.clone());
+        async move { call(state, "POST", &path, &token, Some(json!({"email": email}))).await }
+    };
+    // The owner and two invited: the third address does not fit.
+    assert_eq!(
+        invite(owner_token.clone(), member_email.to_uppercase())
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        invite(owner_token.clone(), "second@example.invalid".to_owned())
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    let (status, body) = invite(owner_token.clone(), "third@example.invalid".to_owned()).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("team-full"))
+    );
+    assert_eq!(
+        invite(stranger_token.clone(), "x@example.invalid".to_owned())
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    // The invited person connects from their account.
+    let inst = "MMMMMMMMMMMMMMMMMMMMMM";
+    let (status, body) = call(
+        state.clone(),
+        "POST",
+        "/internal/licences/connect",
+        &member_token,
+        Some(json!({"inst": inst})),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["lid"]),
+        (StatusCode::OK, &json!(lid)),
+        "{body}"
+    );
+    let (status, team) = call(state.clone(), "GET", &path, &owner_token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(team["members"], 3);
+    assert_eq!(
+        team["invited"][0],
+        json!({"email": member_email, "joined": true})
+    );
+    assert_eq!(
+        team["invited"][1],
+        json!({"email": "second@example.invalid", "joined": false})
+    );
+    let (status, _) = call(
+        state.clone(),
+        "POST",
+        "/internal/licences/connect",
+        &stranger_token,
+        Some(json!({"inst": "SSSSSSSSSSSSSSSSSSSSSS"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "not invited: no licence");
+
+    // Removed: their browser is disconnected.
+    assert_eq!(active_seats(&mut world.owner, &lid).await, 1);
+    let (status, _) = call(
+        state.clone(),
+        "DELETE",
+        &format!("{path}/{member_email}"),
+        &owner_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(active_seats(&mut world.owner, &lid).await, 0);
+
+    world.clean().await;
+}
+
+#[tokio::test]
+async fn a_personal_licence_has_no_members() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let keys = keys();
+    let state = support::api_state(&world.url, shared(&clock), &Config::default())
+        .await
+        .with_auth(Verifier::fixed(
+            &json!({"keys": [keys.jwk]}),
+            ISSUER.to_owned(),
+            shared(&clock),
+        ));
+    let owner = world.person().await;
+    let double = Double::default();
+    let (lid, _, _) = bought(&mut world, &double, owner, 5, clock.now()).await;
+    assert_eq!(
+        size_of(&mut world, &lid).await,
+        (1, 2),
+        "a person, whatever the quantity"
+    );
+    let (status, body) = call(
+        state,
+        "GET",
+        &format!("/internal/licences/{lid}/members"),
+        &token(&keys, owner, &clock),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("not-a-team"))
+    );
+    world.clean().await;
+}
+
+#[tokio::test]
+async fn a_team_follows_its_size_at_stripe() {
+    let Some(mut world) = World::with(false, Some(2)).await else {
+        return;
+    };
+    let now = OffsetDateTime::now_utc();
+    let owner = world.person().await;
+    let double = Double::default();
+    let (lid, sub, mut snapshot) = bought(&mut world, &double, owner, 3, now).await;
+    assert_eq!(size_of(&mut world, &lid).await, (3, 6));
+    snapshot.quantity = 2;
+    double.set(snapshot);
+    let event = world
+        .event("customer.subscription.updated", json!({"id": sub}), now)
+        .await;
+    world.process(&double, event, now).await.unwrap();
+    assert_eq!(size_of(&mut world, &lid).await, (2, 4));
     world.clean().await;
 }

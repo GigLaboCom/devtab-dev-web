@@ -9,7 +9,7 @@ use super::{entitlement, key, seats, secret};
 use crate::http::error::AppError;
 use crate::state::AppState;
 use crate::store::licences::LicenceRow;
-use crate::store::{installations, licences};
+use crate::store::{installations, licences, members, users};
 use uuid::Uuid;
 
 /// A successful activation.
@@ -48,13 +48,14 @@ pub async fn activate(
     let Some(licence) = licences::find_by_key_hash_for_update(&mut *tx, key_hash).await? else {
         return Err(AppError::KeyUnknown);
     };
-    let done = admit(state, &mut tx, &licence, inst).await?;
+    let (done, _) = admit(state, &mut tx, &licence, inst).await?;
     tx.commit().await?;
     Ok(done)
 }
 
-/// Activates `inst` with the signed-in person's licence: `lid` when given
-/// (it must be theirs); otherwise the person never chooses: the licence this
+/// Activates `inst` with the signed-in person's licence — their own, or a
+/// team's that invited their address: `lid` when given (it must be one of
+/// those); otherwise the person never chooses: the licence this
 /// installation is already active on, else the first usable one with a free
 /// seat, the longest-running first (no end before any end). None usable:
 /// `no-licence`; all full: `seat-limit`. Then as [`activate`] from step 2.
@@ -72,7 +73,18 @@ pub async fn activate_for_user(
             && entitlement(l).is_active_at(iat, spans)
     };
     let mut tx = state.store.pool().begin().await?;
-    let mine = licences::of_user(&mut *tx, user).await?;
+    let email = users::email_of(&mut *tx, user)
+        .await?
+        .map(|e| e.trim().to_lowercase());
+    let mut mine = licences::of_user(&mut *tx, user).await?;
+    if let Some(email) = &email {
+        for licence in licences::of_member(&mut *tx, email).await? {
+            if !mine.iter().any(|l| l.id == licence.id) {
+                mine.push(licence);
+            }
+        }
+    }
+    let allowed: Vec<uuid::Uuid> = mine.iter().map(|l| l.id).collect();
     let candidates: Vec<String> = if let Some(lid) = lid {
         let named = mine
             .iter()
@@ -105,12 +117,18 @@ pub async fn activate_for_user(
     for lid in candidates {
         let Some(licence) = licences::find_by_lid_for_update(&mut *tx, &lid)
             .await?
-            .filter(|l| l.user_id == Some(user))
+            .filter(|l| allowed.contains(&l.id))
         else {
             return Err(AppError::NotFound);
         };
         match admit(state, &mut tx, &licence, inst).await {
-            Ok(done) => {
+            Ok((done, installation)) => {
+                installations::set_user(&mut *tx, installation, user).await?;
+                if licence.user_id != Some(user)
+                    && let Some(email) = &email
+                {
+                    members::join(&mut *tx, licence.id, email, user).await?;
+                }
                 tx.commit().await?;
                 return Ok(done);
             }
@@ -128,7 +146,7 @@ async fn admit(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     licence: &LicenceRow,
     inst: &str,
-) -> Result<Activated, AppError> {
+) -> Result<(Activated, uuid::Uuid), AppError> {
     let now = state.clock.now();
     let iat = now.unix_timestamp();
     let settings = &state.licence;
@@ -141,23 +159,27 @@ async fn admit(
     }
     let new_secret = secret::generate()?;
     let existing = installations::find(&mut **tx, licence.id, inst).await?;
-    match existing {
+    let installation = match existing {
         Some(installation) if installation.status == "active" => {
             installations::replace_secret(&mut **tx, installation.id, &new_secret.hash, now)
                 .await?;
+            installation.id
         }
         _ => {
             seats::admit(tx, licence.id, licence.seats, now, settings).await?;
-            installations::activate(&mut **tx, licence.id, inst, &new_secret.hash, now).await?;
+            installations::activate(&mut **tx, licence.id, inst, &new_secret.hash, now).await?
         }
-    }
+    };
     let claims = token::issue(&licence.lid, inst, iat, &rights, &settings.spans);
     debug_assert_eq!(claims.status, Status::Active);
-    Ok(Activated {
-        token: state.signer.sign(&claims),
-        secret: new_secret.secret,
-        lid: licence.lid.clone(),
-    })
+    Ok((
+        Activated {
+            token: state.signer.sign(&claims),
+            secret: new_secret.secret,
+            lid: licence.lid.clone(),
+        },
+        installation,
+    ))
 }
 
 /// The hash a raw key is looked up by, or `key-unknown` when it is not a key

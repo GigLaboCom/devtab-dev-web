@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, kind, \"interval\", seats, sort, available, until\n           from app.plans order by sort, id",
+  "query": "select id, kind, \"interval\", seats, sort, available, until, min_members\n           from app.plans order by sort, id",
   "describe": {
     "columns": [
       {
@@ -79,6 +79,17 @@
             "name": "until"
           }
         }
+      },
+      {
+        "ordinal": 7,
+        "name": "min_members",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "app.plans",
+            "name": "min_members"
+          }
+        }
       }
     ],
     "parameters": {
@@ -91,8 +102,9 @@
       true,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "a54b516d450db7aceefb6e8bc7393d07a1968859249b2a2051dae20897686f12"
+  "hash": "86f58383ae3b2fdcaa44892dc4919f345bc3480b4539c0d8ea2792f825aaa519"
 }

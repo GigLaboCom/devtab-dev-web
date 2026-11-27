@@ -205,3 +205,36 @@ pub async fn release_inactive(
     .fetch_all(db)
     .await
 }
+
+/// Records the person who connected the installation from their account.
+pub async fn set_user(db: impl PgExecutor<'_>, id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "update app.installations set user_id = $2 where id = $1",
+        id,
+        user_id
+    )
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
+/// Frees the seats of the installations `user_id` connected to the licence
+/// from their account; how many.
+pub async fn release_of_user(
+    db: impl PgExecutor<'_>,
+    licence_id: Uuid,
+    user_id: Uuid,
+    now: OffsetDateTime,
+) -> Result<u64, sqlx::Error> {
+    let released = sqlx::query!(
+        "update app.installations set
+           status = 'released', released_reason = 'manual', released_at = $3
+         where licence_id = $1 and user_id = $2 and status = 'active'",
+        licence_id,
+        user_id,
+        now,
+    )
+    .execute(db)
+    .await?;
+    Ok(released.rows_affected())
+}

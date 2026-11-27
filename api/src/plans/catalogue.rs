@@ -139,6 +139,10 @@ pub struct SitePlan {
     /// The language of its texts: the one asked for, or `en` where the plan
     /// has none in it.
     pub locale: String,
+    /// A team plan's smallest team: its price is per member. Null for a
+    /// personal plan.
+    #[schema(required = true)]
+    pub min_members: Option<i16>,
 }
 
 /// The answer of `GET /internal/plans`.
@@ -237,6 +241,9 @@ pub fn public(
     let plans = rows
         .plans
         .iter()
+        // Team plans are sold on the site only: the extension's catalogue has no
+        // members in its model.
+        .filter(|plan| plan.min_members.is_none())
         .filter_map(|plan| card(rows, plan, "en", settings, now))
         .filter(|(_, sellable, _)| *sellable)
         .map(|(plan, _, _)| plan)
@@ -262,8 +269,8 @@ pub fn site(
     let plans = rows
         .plans
         .iter()
-        .filter_map(|plan| card(rows, plan, locale, settings, now))
-        .map(|(plan, sellable, texts_locale)| {
+        .filter_map(|plan| card(rows, plan, locale, settings, now).map(|c| (c, plan.min_members)))
+        .map(|((plan, sellable, texts_locale), min_members)| {
             // The extension gets the first six that can be sold; the page shows the same.
             let available = sellable && sold < MAX_PLANS;
             sold += usize::from(available);
@@ -271,6 +278,7 @@ pub fn site(
                 plan,
                 available,
                 locale: texts_locale,
+                min_members,
             }
         })
         .collect();
@@ -325,6 +333,7 @@ mod tests {
             sort,
             available: true,
             until: None,
+            min_members: None,
         }
     }
 

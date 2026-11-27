@@ -233,6 +233,12 @@ pub fn read_subscription(subscription: &Value) -> Result<SubscriptionSnapshot, P
         .ok_or_else(|| {
             ProviderError::Unavailable(format!("subscription {id}: no current_period_end"))
         })?;
+    let quantity = item
+        .get("quantity")
+        .and_then(Value::as_u64)
+        .and_then(|q| u32::try_from(q).ok())
+        .filter(|q| *q > 0)
+        .unwrap_or(1);
     let cancel_at_period_end = subscription
         .get("cancel_at_period_end")
         .and_then(Value::as_bool)
@@ -263,6 +269,7 @@ pub fn read_subscription(subscription: &Value) -> Result<SubscriptionSnapshot, P
         id,
         status,
         price_id,
+        quantity,
         current_period_end,
         cancel_at_period_end,
         customer,

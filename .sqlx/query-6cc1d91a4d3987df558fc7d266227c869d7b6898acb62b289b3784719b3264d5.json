@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, user_id, plan_id, status, revoke_reason, paid_until, cancel_at_period_end,\n                past_due_since, ended_at\n         from app.licences\n         where provider = $1 and provider_subscription_id = $2\n         for update",
+  "query": "select id, user_id, plan_id, status, revoke_reason, seats, members, paid_until,\n                cancel_at_period_end, past_due_since, ended_at\n         from app.licences\n         where provider = $1 and provider_subscription_id = $2\n         for update",
   "describe": {
     "columns": [
       {
@@ -60,6 +60,28 @@
       },
       {
         "ordinal": 5,
+        "name": "seats",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "seats"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "members",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "members"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "paid_until",
         "type_info": "Timestamptz",
         "origin": {
@@ -70,7 +92,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "cancel_at_period_end",
         "type_info": "Bool",
         "origin": {
@@ -81,7 +103,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "past_due_since",
         "type_info": "Timestamptz",
         "origin": {
@@ -92,7 +114,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "ended_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -115,11 +137,13 @@
       false,
       false,
       true,
+      false,
+      false,
       true,
       false,
       true,
       true
     ]
   },
-  "hash": "9f6aa64ba0b19f93287c172dcb950b8c5f823102349a50470863bdd7cc1641a5"
+  "hash": "6cc1d91a4d3987df558fc7d266227c869d7b6898acb62b289b3784719b3264d5"
 }

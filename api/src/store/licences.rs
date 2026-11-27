@@ -38,6 +38,8 @@ pub struct NewLicence<'a> {
     pub plan_id: &'a str,
     pub kind: &'a str,
     pub seats: i32,
+    /// A team's members; 1 for a person.
+    pub members: i32,
     pub paid_until: Option<OffsetDateTime>,
     pub cancel_at_period_end: bool,
     pub provider: Option<&'a str>,
@@ -51,8 +53,8 @@ pub async fn insert(db: impl PgExecutor<'_>, new: &NewLicence<'_>) -> Result<Uui
     sqlx::query_scalar!(
         "insert into app.licences
            (lid, user_id, customer_id, plan_id, kind, seats, paid_until, cancel_at_period_end,
-            provider, provider_subscription_id, key_hash, key_hint, note)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            provider, provider_subscription_id, key_hash, key_hint, note, members)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          returning id",
         new.lid,
         new.user_id,
@@ -67,6 +69,7 @@ pub async fn insert(db: impl PgExecutor<'_>, new: &NewLicence<'_>) -> Result<Uui
         new.key_hash,
         new.key_hint,
         new.note,
+        new.members,
     )
     .fetch_one(db)
     .await
@@ -214,6 +217,8 @@ pub struct SubscriptionLicence {
     pub plan_id: String,
     pub status: String,
     pub revoke_reason: Option<String>,
+    pub seats: i32,
+    pub members: i32,
     pub paid_until: Option<OffsetDateTime>,
     pub cancel_at_period_end: bool,
     pub past_due_since: Option<OffsetDateTime>,
@@ -229,8 +234,8 @@ pub async fn find_by_subscription_for_update(
 ) -> Result<Option<SubscriptionLicence>, sqlx::Error> {
     sqlx::query_as!(
         SubscriptionLicence,
-        "select id, user_id, plan_id, status, revoke_reason, paid_until, cancel_at_period_end,
-                past_due_since, ended_at
+        "select id, user_id, plan_id, status, revoke_reason, seats, members, paid_until,
+                cancel_at_period_end, past_due_since, ended_at
          from app.licences
          where provider = $1 and provider_subscription_id = $2
          for update",
@@ -250,7 +255,8 @@ pub async fn apply_subscription(
     sqlx::query!(
         "update app.licences
          set status = $2, revoke_reason = $3, plan_id = $4, paid_until = $5,
-             cancel_at_period_end = $6, past_due_since = $7, ended_at = $8
+             cancel_at_period_end = $6, past_due_since = $7, ended_at = $8, seats = $9,
+             members = $10
          where id = $1",
         licence.id,
         licence.status,
@@ -260,6 +266,8 @@ pub async fn apply_subscription(
         licence.cancel_at_period_end,
         licence.past_due_since,
         licence.ended_at,
+        licence.seats,
+        licence.members,
     )
     .execute(db)
     .await
@@ -269,6 +277,34 @@ pub async fn apply_subscription(
 /// The last four characters of the licence's key.
 pub async fn hint_of(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar!("select key_hint from app.licences where id = $1", id)
+        .fetch_optional(db)
+        .await
+}
+
+/// The licences whose team invited `email` (lower case), newest first.
+pub async fn of_member(
+    db: impl PgExecutor<'_>,
+    email: &str,
+) -> Result<Vec<LicenceRow>, sqlx::Error> {
+    sqlx::query_as!(
+        LicenceRow,
+        r#"select l.id, l.lid, l.user_id, l.customer_id, l.plan_id, l.kind, l.status,
+                  l.revoke_reason, l.seats, l.paid_until, l.cancel_at_period_end, l.key_hint,
+                  l.key_version, l.key_blocked_at, l.note, l.created_at, p."interval" as "term?"
+           from app.licences l
+           join app.plans p on p.id = l.plan_id
+           join app.licence_members m on m.licence_id = l.id
+           where m.email = $1
+           order by l.created_at desc, l.lid"#,
+        email,
+    )
+    .fetch_all(db)
+    .await
+}
+
+/// A team licence's number of members (1 for a person).
+pub async fn members_of(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<i32>, sqlx::Error> {
+    sqlx::query_scalar!("select members from app.licences where id = $1", id)
         .fetch_optional(db)
         .await
 }

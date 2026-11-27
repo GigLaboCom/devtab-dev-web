@@ -193,6 +193,8 @@ fn request() -> CheckoutRequest {
     CheckoutRequest {
         checkout_id: Uuid::from_u128(1),
         price_id: "price_month".to_owned(),
+        quantity: 1,
+        adjustable_from: None,
         customer: None,
         locale: Some("en".to_owned()),
         success_url: "https://web.example.invalid/pro/thanks/".to_owned(),
@@ -416,4 +418,27 @@ fn api_versions_are_checked() {
     ] {
         assert!(!is_supported_api_version(old_or_odd), "{old_or_odd}");
     }
+}
+
+#[test]
+fn a_team_checkout_lets_the_buyer_change_the_number_of_members() {
+    let stripe = provider("http://127.0.0.1:9", CheckoutUi::Hosted, true);
+    let mut team = request();
+    team.quantity = 5;
+    team.adjustable_from = Some(2);
+    let form = stripe.checkout_form(&team);
+    for (key, want) in [
+        ("line_items[0][quantity]", "5"),
+        ("line_items[0][adjustable_quantity][enabled]", "true"),
+        ("line_items[0][adjustable_quantity][minimum]", "2"),
+        ("line_items[0][adjustable_quantity][maximum]", "1000"),
+    ] {
+        assert_eq!(value(&form, key), Some(want), "{key}");
+    }
+    let personal = stripe.checkout_form(&request());
+    assert_eq!(value(&personal, "line_items[0][quantity]"), Some("1"));
+    assert_eq!(
+        value(&personal, "line_items[0][adjustable_quantity][enabled]"),
+        None
+    );
 }

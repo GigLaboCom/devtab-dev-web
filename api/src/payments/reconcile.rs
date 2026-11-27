@@ -136,6 +136,7 @@ mod tests {
             id: "sub_1".to_owned(),
             status,
             price_id: "price_month".to_owned(),
+            quantity: 1,
             current_period_end: at(period_end),
             cancel_at_period_end: false,
             customer: "cus_1".to_owned(),

@@ -220,9 +220,12 @@ pub async fn sync_subscription(
                 Decision::Update(state) => Some(state),
                 _ => None,
             };
-            // A switch of price changes the plan, whatever else changed.
+            // A switch of price changes the plan, and a team's size its seats,
+            // whatever else changed.
+            let (members, seats) = team_size(conn, &price.plan_id, snapshot.quantity).await?;
+            let resized = licence.members != members || licence.seats != seats;
             let plan_moved = licence.plan_id != price.plan_id;
-            if state.is_none() && !plan_moved {
+            if state.is_none() && !plan_moved && !resized {
                 LicenceChange::Unchanged
             } else {
                 if let Some(state) = state {
@@ -233,6 +236,8 @@ pub async fn sync_subscription(
                     licence.ended_at = state.ended_at;
                 }
                 licence.plan_id.clone_from(&price.plan_id);
+                licence.members = members;
+                licence.seats = seats;
                 licences::apply_subscription(&mut *conn, &licence).await?;
                 LicenceChange::Updated(licence.id)
             }
@@ -298,12 +303,7 @@ async fn issue(
             checkout.id, checkout.provider
         )));
     }
-    let plan = plans::find(&mut *conn, plan_id)
-        .await?
-        .ok_or_else(|| ProcessError::Permanent(format!("no plan `{plan_id}`")))?;
-    let seats = plan
-        .seats
-        .ok_or_else(|| ProcessError::Permanent(format!("plan `{plan_id}` has no seats")))?;
+    let (members, seats) = team_size(conn, plan_id, snapshot.quantity).await?;
     let customer = customer_of(conn, provider, &snapshot.customer, checkout.user_id).await?;
     let lid = key::new_lid().map_err(|err| ProcessError::Retry(err.to_string()))?;
     let new_key = key::generate().map_err(|err| ProcessError::Retry(err.to_string()))?;
@@ -316,6 +316,7 @@ async fn issue(
             plan_id,
             kind: "subscription",
             seats,
+            members,
             paid_until: state.paid_until,
             cancel_at_period_end: state.cancel_at_period_end,
             provider: Some(provider),
@@ -329,6 +330,27 @@ async fn issue(
     reveals::insert(&mut *conn, id, &new_key.display, now, now + REVEAL_FOR).await?;
     tracing::info!(lid = %lid, plan = plan_id, provider, "licence issued from a checkout");
     Ok(id)
+}
+
+/// A licence's members and seats for `quantity` of `plan_id`: a team plan
+/// gives its seats to each member; a personal plan is one person, whatever the
+/// quantity.
+async fn team_size(
+    conn: &mut PgConnection,
+    plan_id: &str,
+    quantity: u32,
+) -> Result<(i32, i32), ProcessError> {
+    let plan = plans::find(&mut *conn, plan_id)
+        .await?
+        .ok_or_else(|| ProcessError::Permanent(format!("no plan `{plan_id}`")))?;
+    let per_member = plan
+        .seats
+        .ok_or_else(|| ProcessError::Permanent(format!("plan `{plan_id}` has no seats")))?;
+    if plan.min_members.is_none() {
+        return Ok((1, per_member));
+    }
+    let members = i32::try_from(quantity.clamp(1, 1000)).unwrap_or(1);
+    Ok((members, per_member.saturating_mul(members)))
 }
 
 /// The provider's customer of `user_id`: found, or recorded now. A customer

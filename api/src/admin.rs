@@ -375,6 +375,7 @@ async fn comp(
             plan_id,
             kind: "complimentary",
             seats,
+            members: 1,
             paid_until,
             cancel_at_period_end: false,
             provider: None,

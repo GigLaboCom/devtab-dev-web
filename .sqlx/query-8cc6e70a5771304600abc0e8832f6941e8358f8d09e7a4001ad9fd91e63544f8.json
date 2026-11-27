@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "insert into app.licences\n           (lid, user_id, customer_id, plan_id, kind, seats, paid_until, cancel_at_period_end,\n            provider, provider_subscription_id, key_hash, key_hint, note)\n         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)\n         returning id",
+  "query": "insert into app.licences\n           (lid, user_id, customer_id, plan_id, kind, seats, paid_until, cancel_at_period_end,\n            provider, provider_subscription_id, key_hash, key_hint, note, members)\n         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\n         returning id",
   "describe": {
     "columns": [
       {
@@ -29,12 +29,13 @@
         "Text",
         "Bytea",
         "Text",
-        "Text"
+        "Text",
+        "Int4"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "a63bae8496da3a9ac43836121b4bbdfd928fe91948dfcc41a621d3a684486072"
+  "hash": "8cc6e70a5771304600abc0e8832f6941e8358f8d09e7a4001ad9fd91e63544f8"
 }

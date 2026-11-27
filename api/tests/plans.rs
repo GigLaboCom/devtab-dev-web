@@ -474,6 +474,7 @@ async fn sync_refuses_what_the_extension_would_skip() {
                 sort: 100,
                 available: true,
                 until: None,
+                min_members: None,
             },
         )
         .await
@@ -772,6 +773,7 @@ async fn insert_test_plans(owner: &mut PgConnection, clock_now: OffsetDateTime) 
             sort,
             available,
             until,
+            min_members: None,
         };
     let plans = [
         plan("test-cat-free", "free", None, -32_000, true, None),

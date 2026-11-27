@@ -114,6 +114,8 @@ pub struct SubscriptionSnapshot {
     pub status: SubscriptionStatus,
     /// The provider's id of the price it bills.
     pub price_id: String,
+    /// How many of the price: a team's members, 1 for a person.
+    pub quantity: u32,
     pub current_period_end: OffsetDateTime,
     /// It ends at the end of the period.
     pub cancel_at_period_end: bool,

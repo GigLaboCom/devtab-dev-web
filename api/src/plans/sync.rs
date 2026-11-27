@@ -148,13 +148,14 @@ pub fn next_version(current: Option<&str>, now: OffsetDateTime) -> String {
 
 fn describe_plan(plan: &PlanRow) -> String {
     format!(
-        "kind={} interval={} seats={} sort={} available={} until={}",
+        "kind={} interval={} seats={} sort={} available={} until={} min_members={}",
         plan.kind,
         plan.interval.as_deref().unwrap_or("-"),
         plan.seats.map_or("-".to_owned(), |s| s.to_string()),
         plan.sort,
         plan.available,
         plan.until.map_or("-".to_owned(), rfc3339),
+        plan.min_members.map_or("-".to_owned(), |m| m.to_string()),
     )
 }
 

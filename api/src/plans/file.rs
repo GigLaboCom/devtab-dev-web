@@ -11,6 +11,8 @@
 //! sort = 2                    # the order of the cards
 //! available = false           # shown and sold now
 //! until = "2027-01-01T00:00:00Z"   # optional: the end of a limited offer
+//! min_members = 2             # a team plan: sold per member, at least this
+//!                             # many (seats are per member); site only
 //! [plan.texts.en]             # required; [plan.texts.ru] optional
 //! name = "Monthly"
 //! summary = "Pro, billed every month."
@@ -62,6 +64,8 @@ struct PlanSpec {
     #[serde(default)]
     available: bool,
     until: Option<String>,
+    /// A team plan, sold per member: the smallest team.
+    min_members: Option<i16>,
     #[serde(default)]
     texts: BTreeMap<String, TextSpec>,
     #[serde(default)]
@@ -235,6 +239,11 @@ fn check_plan(
         }
     }
 
+    if let Some(min) = spec.min_members
+        && (kind != "subscription" || !(1..=1000).contains(&min))
+    {
+        count("min_members makes a team plan: a subscription, 1 to 1000 members".to_owned());
+    }
     if kind == "free" && !spec.prices.is_empty() {
         count("a free plan has no price".to_owned());
     }
@@ -252,6 +261,7 @@ fn check_plan(
             sort: spec.sort,
             available: spec.available,
             until,
+            min_members: spec.min_members,
         },
         texts,
         prices,
@@ -476,6 +486,14 @@ amount_minor = 1111
                     "pro-annual",
                     &PriceKey::LookupKey("devtab-pro-annual".to_owned())
                 ),
+                (
+                    "team-monthly",
+                    &PriceKey::LookupKey("devtab-team-monthly".to_owned())
+                ),
+                (
+                    "team-annual",
+                    &PriceKey::LookupKey("devtab-team-annual".to_owned())
+                ),
             ]
         );
         assert!(
@@ -578,6 +596,16 @@ amount_minor = 1111
             parse(unpriced).is_err(),
             "an available paid plan without a price"
         );
+    }
+
+    #[test]
+    fn a_team_plan_is_a_subscription_of_1_to_1000_members() {
+        let team = MONTHLY.replace("seats = 3", "seats = 3\nmin_members = 2");
+        assert_eq!(parse(&team).unwrap().plans[0].plan.min_members, Some(2));
+        assert!(parse(&MONTHLY.replace("seats = 3", "seats = 3\nmin_members = 0")).is_err());
+        let free = "[[plan]]\nid = \"free\"\nkind = \"free\"\nsort = 1\nmin_members = 2\n\
+                    [plan.texts.en]\nname = \"Free\"\n";
+        assert!(parse(free).is_err(), "a free plan is no team");
     }
 
     #[test]

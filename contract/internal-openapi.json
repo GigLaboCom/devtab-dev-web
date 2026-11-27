@@ -247,6 +247,220 @@
         ]
       }
     },
+    "/internal/licences/{lid}/members": {
+      "get": {
+        "tags": [
+          "licences"
+        ],
+        "summary": "`GET /internal/licences/{lid}/members`.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "lid",
+            "in": "path",
+            "description": "The team licence",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The team",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such licence of this person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`not-a-team`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "licences"
+        ],
+        "summary": "`POST /internal/licences/{lid}/members`.",
+        "operationId": "invite",
+        "parameters": [
+          {
+            "name": "lid",
+            "in": "path",
+            "description": "The team licence",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Invite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Invited (or already invited)"
+          },
+          "400": {
+            "description": "Not an e-mail address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such licence of this person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`not-a-team`, or `team-full`: every member bought is invited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/internal/licences/{lid}/members/{email}": {
+      "delete": {
+        "tags": [
+          "licences"
+        ],
+        "summary": "`DELETE /internal/licences/{lid}/members/{email}`.",
+        "operationId": "remove",
+        "parameters": [
+          {
+            "name": "lid",
+            "in": "path",
+            "description": "The team licence",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "email",
+            "in": "path",
+            "description": "The member's address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed; the browsers they connected are disconnected"
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such licence of this person, or no such member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`not-a-team`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/internal/me": {
       "get": {
         "tags": [
@@ -494,6 +708,19 @@
           }
         }
       },
+      "Invite": {
+        "type": "object",
+        "description": "An address to invite.",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "Locale": {
         "type": "string",
         "description": "The languages of the site's pages.",
@@ -524,6 +751,23 @@
           }
         }
       },
+      "Member": {
+        "type": "object",
+        "description": "One invited address.",
+        "required": [
+          "email",
+          "joined"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "joined": {
+            "type": "boolean",
+            "description": "The person has signed in with it and connected."
+          }
+        }
+      },
       "NewCheckout": {
         "type": "object",
         "description": "A checkout to start.",
@@ -534,6 +778,15 @@
           "locale": {
             "$ref": "#/components/schemas/Locale",
             "description": "The language of the provider's page, the return page and the mail."
+          },
+          "members": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "A team plan: how many members to start with (its smallest team when\nabsent; the buyer may change it on the provider's page). Not for a\npersonal plan.",
+            "minimum": 0
           },
           "plan": {
             "type": "string",
@@ -718,7 +971,8 @@
             "type": "object",
             "required": [
               "available",
-              "locale"
+              "locale",
+              "minMembers"
             ],
             "properties": {
               "available": {
@@ -728,6 +982,14 @@
               "locale": {
                 "type": "string",
                 "description": "The language of its texts: the one asked for, or `en` where the plan\nhas none in it."
+              },
+              "minMembers": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "format": "int32",
+                "description": "A team plan's smallest team: its price is per member. Null for a\npersonal plan."
               }
             }
           }
@@ -762,6 +1024,28 @@
               "null"
             ],
             "description": "The provider's page (a hosted checkout); answer it with 303."
+          }
+        }
+      },
+      "Team": {
+        "type": "object",
+        "description": "A team's members.",
+        "required": [
+          "members",
+          "invited"
+        ],
+        "properties": {
+          "invited": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Member"
+            },
+            "description": "The invited addresses, at most `members` − 1."
+          },
+          "members": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Members bought, the owner included."
           }
         }
       },

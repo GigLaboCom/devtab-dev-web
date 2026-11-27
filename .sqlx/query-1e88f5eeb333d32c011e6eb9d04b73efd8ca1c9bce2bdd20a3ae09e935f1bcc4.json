@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select members from app.licences where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "members",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "members"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1e88f5eeb333d32c011e6eb9d04b73efd8ca1c9bce2bdd20a3ae09e935f1bcc4"
+}

@@ -54,3 +54,42 @@ badge = "Save with a year"
 [[plan.prices]]
 provider = "stripe"
 lookup_key = "devtab-pro-annual"
+
+# Team plans: sold per member on the site only (the extension's cards show
+# the personal plans). Each member gets the plan's seats; the buyer picks the
+# number of members on Stripe's page, at least min_members, and changes it
+# later in Stripe's customer portal.
+
+[[plan]]
+id = "team-monthly"
+kind = "subscription"
+interval = "month"
+seats = 3
+sort = 4
+available = true
+min_members = 2
+[plan.texts.en]
+name = "Team, monthly"
+summary = "Pro for each member of a team, billed every month."
+includes = ["Everything in Pro, for every member", "Invite members by e-mail"]
+price_note = "Per member. Tax calculated at checkout."
+[[plan.prices]]
+provider = "stripe"
+lookup_key = "devtab-team-monthly"
+
+[[plan]]
+id = "team-annual"
+kind = "subscription"
+interval = "year"
+seats = 3
+sort = 5
+available = true
+min_members = 2
+[plan.texts.en]
+name = "Team, annually"
+summary = "Pro for each member of a team, billed once a year."
+includes = ["Everything in Team, monthly"]
+price_note = "Per member. Tax calculated at checkout."
+[[plan.prices]]
+provider = "stripe"
+lookup_key = "devtab-team-annual"

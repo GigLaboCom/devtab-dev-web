@@ -151,6 +151,11 @@ pub struct CheckoutRequest {
     pub checkout_id: Uuid,
     /// The provider's price id, from the stored catalogue.
     pub price_id: String,
+    /// How many: a team's members, 1 for a person.
+    pub quantity: u32,
+    /// A team: the buyer may change the number on the checkout page, from
+    /// this smallest team up to 1000.
+    pub adjustable_from: Option<u32>,
     /// The buyer's Stripe customer, when the account already has one.
     pub customer: Option<String>,
     /// The checkout's language (`en`, `ru`, …); Stripe's own choice without.
@@ -229,7 +234,10 @@ impl StripeProvider {
         let mut form: Vec<(String, String)> = vec![
             ("mode".into(), "subscription".into()),
             ("line_items[0][price]".into(), request.price_id.clone()),
-            ("line_items[0][quantity]".into(), "1".into()),
+            (
+                "line_items[0][quantity]".into(),
+                request.quantity.to_string(),
+            ),
             ("client_reference_id".into(), checkout.clone()),
             (
                 format!("metadata[{CHECKOUT_METADATA_KEY}]"),
@@ -240,6 +248,20 @@ impl StripeProvider {
                 checkout,
             ),
         ];
+        if let Some(min) = request.adjustable_from {
+            form.push((
+                "line_items[0][adjustable_quantity][enabled]".into(),
+                "true".into(),
+            ));
+            form.push((
+                "line_items[0][adjustable_quantity][minimum]".into(),
+                min.to_string(),
+            ));
+            form.push((
+                "line_items[0][adjustable_quantity][maximum]".into(),
+                "1000".into(),
+            ));
+        }
         match self.settings.checkout_ui {
             CheckoutUi::Hosted => {
                 form.push(("success_url".into(), request.success_url.clone()));

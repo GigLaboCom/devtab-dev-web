@@ -37,6 +37,10 @@ pub struct NewCheckout {
     /// The language of the provider's page, the return page and the mail.
     #[serde(default)]
     pub locale: Locale,
+    /// A team plan: how many members to start with (its smallest team when
+    /// absent; the buyer may change it on the provider's page). Not for a
+    /// personal plan.
+    pub members: Option<u32>,
 }
 
 /// Stripe's form for the site's own page.
@@ -95,6 +99,7 @@ pub async fn start(
     if !on_sale {
         return Err(AppError::PlanUnavailable);
     }
+    let (quantity, adjustable_from) = team_quantity(plan.min_members, body.members)?;
     let price = plans::active_price_of_plan(pool, &plan.id, stripe::ID)
         .await?
         .ok_or(AppError::PlanUnavailable)?;
@@ -122,6 +127,8 @@ pub async fn start(
     let request = CheckoutRequest {
         checkout_id: id,
         price_id: price.provider_price_id,
+        quantity,
+        adjustable_from,
         customer: customer.map(|c| c.provider_customer_id),
         locale: Some(locale.to_owned()),
         success_url: format!("{site}{prefix}/pro/thanks/?ref={id}"),
@@ -162,6 +169,31 @@ pub async fn start(
         .into_response();
     no_store(&mut response);
     Ok(response)
+}
+
+/// How many to buy, and from what number the buyer may change it: a team
+/// plan's members (its smallest team when not given), one for a personal plan.
+fn team_quantity(
+    min_members: Option<i16>,
+    members: Option<u32>,
+) -> Result<(u32, Option<u32>), AppError> {
+    match (min_members, members) {
+        (None, None) => Ok((1, None)),
+        (None, Some(_)) => Err(AppError::BadRequest(
+            "members is for a team plan only".to_owned(),
+        )),
+        (Some(min), members) => {
+            let min = u32::try_from(min).unwrap_or(1);
+            let members = members.unwrap_or(min);
+            if (min..=1000).contains(&members) {
+                Ok((members, Some(min)))
+            } else {
+                Err(AppError::BadRequest(format!(
+                    "members must be {min} to 1000"
+                )))
+            }
+        }
+    }
 }
 
 /// Where a checkout stands.

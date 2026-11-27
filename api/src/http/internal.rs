@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::HeaderValue;
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse as _, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
@@ -17,7 +17,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use uuid::Uuid;
 
 use super::error::{AppError, ErrorBody};
-use super::{checkouts, connect, plans};
+use super::{checkouts, connect, members, plans};
 use crate::auth::CurrentUser;
 use crate::config::Config;
 use crate::plans::catalogue::{Plan, PlanKind, Price, SiteCatalogue, SitePlan, Term};
@@ -101,6 +101,14 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         .route("/internal/checkouts", post(checkouts::start))
         .route("/internal/checkouts/{id}", get(checkouts::read))
         .route("/internal/licences/connect", post(connect::connect))
+        .route(
+            "/internal/licences/{lid}/members",
+            get(members::list).post(members::invite),
+        )
+        .route(
+            "/internal/licences/{lid}/members/{email}",
+            delete(members::remove),
+        )
         .fallback(|| async { AppError::NotFound })
         .with_state(state)
 }
@@ -118,7 +126,10 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         me,
         checkouts::start,
         checkouts::read,
-        connect::connect
+        connect::connect,
+        members::list,
+        members::invite,
+        members::remove
     ),
     modifiers(&BearerScheme),
     components(schemas(
@@ -138,7 +149,10 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         checkouts::CheckoutState,
         checkouts::CheckoutStatus,
         connect::ConnectRequest,
-        connect::Connected
+        connect::Connected,
+        members::Team,
+        members::Member,
+        members::Invite
     ))
 )]
 struct InternalApi;
@@ -166,6 +180,8 @@ mod tests {
                 "/internal/checkouts/{id}",
                 "/internal/healthz",
                 "/internal/licences/connect",
+                "/internal/licences/{lid}/members",
+                "/internal/licences/{lid}/members/{email}",
                 "/internal/me",
                 "/internal/plans"
             ]

@@ -28,6 +28,7 @@ async fn complimentary(conn: &mut PgConnection) -> Uuid {
     licences::insert(
         conn,
         &NewLicence {
+            members: 1,
             lid: &lid,
             user_id: None,
             customer_id: None,
