@@ -1,0 +1,32 @@
+---
+/**
+ * The frame of a page of signing in: its heading, then a card with the
+ * page's error (`role="alert"`) or notice, and its forms. What follows the
+ * card (a link to another page of signing in) goes in the `after` slot.
+ */
+interface Props {
+  heading: string;
+  error?: string | undefined;
+  notice?: string | undefined;
+}
+
+const { heading, error, notice } = Astro.props;
+---
+
+<div class="mx-auto w-full max-w-md">
+  <h1 class="text-center text-3xl font-semibold tracking-tight sm:text-4xl">{heading}</h1>
+  <div class="mt-8 rounded-xl border border-border bg-card p-6 shadow-sm sm:p-8">
+    {error && (
+      <p role="alert" class="mb-5 rounded-md border border-border bg-muted px-3 py-2 text-sm">
+        {error}
+      </p>
+    )}
+    {notice && (
+      <p role="status" class="mb-5 rounded-md bg-accent-soft px-3 py-2 text-sm">
+        {notice}
+      </p>
+    )}
+    <slot />
+  </div>
+  <slot name="after" />
+</div>

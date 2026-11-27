@@ -39,6 +39,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       context.locals.auth = {
         userId: data.claims.sub,
         email: typeof data.claims.email === 'string' ? data.claims.email : null,
+        sessionId: typeof data.claims.session_id === 'string' ? data.claims.session_id : null,
         accessToken: session.session.access_token,
       };
     }

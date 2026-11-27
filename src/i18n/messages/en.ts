@@ -51,7 +51,10 @@ const en = {
       empty: 'No plans are offered yet.',
       unavailable: 'Couldn’t load the plans. Try again later.',
     },
-    /** The sign-in page, /sign-in/: awaiting the owner, like `pro`. */
+    /**
+     * The sign-in page, /sign-in/: awaiting the owner, like `pro`. Its
+     * general strings serve the other pages of signing in too.
+     */
     signIn: {
       title: 'Sign in',
       description: 'Sign in with your e-mail address.',
@@ -67,11 +70,61 @@ const en = {
       signedIn: 'You’re signed in as {email}.',
       signOut: 'Sign out',
       unavailable: 'Sign-in isn’t available right now.',
+      or: 'or',
+      passwordLabel: 'Password',
+      signInPassword: 'Sign in',
+      forgot: 'Forgot your password?',
+      noAccount: 'No account yet?',
+      signUp: 'Create an account',
+      passwordChanged: 'Your new password is saved.',
       errorEmail: 'Enter a valid e-mail address.',
       errorSend: 'Couldn’t send the e-mail. Try again later.',
       errorCode: 'This code is wrong or has expired.',
       errorLink: 'This link didn’t work. Enter the code from the e-mail instead.',
       errorRate: 'Too many attempts. Try again later.',
+      errorCredentials: 'The e-mail address or the password is wrong.',
+      errorUnconfirmed: 'Confirm your address first: open the link or enter the code from the e-mail we sent.',
+      errorFailed: 'Couldn’t sign you in. Try again later.',
+      errorPasswordWeak: 'This password is too weak. Choose a longer one.',
+      errorPasswordLong: 'This password is too long: use at most 72 characters.',
+      errorPasswordMismatch: 'The two passwords don’t match.',
+    },
+    /** /sign-up/: a new account with a password; awaiting the owner. */
+    signUp: {
+      title: 'Create an account',
+      description: 'Create an account with your e-mail address and a password.',
+      heading: 'Create an account',
+      intro: 'We’ll send you an e-mail to confirm the address.',
+      confirmLabel: 'Repeat the password',
+      submit: 'Create the account',
+      haveAccount: 'Already have an account?',
+      signIn: 'Sign in',
+      errorExists: 'There is already an account with this address. Sign in instead.',
+    },
+    /** /forgot-password/: a mail to set a new password; awaiting the owner. */
+    forgotPassword: {
+      title: 'Forgot your password',
+      description: 'Get an e-mail to set a new password.',
+      heading: 'Forgot your password',
+      intro: 'We’ll send you an e-mail with a link and a code to set a new password.',
+      sent: 'If there is an account with {email}, we sent it a link and a code.',
+      verify: 'Continue',
+      back: 'Back to sign-in',
+      errorLink: 'This link didn’t work. Enter the code from the e-mail, or ask for a new one.',
+    },
+    /** /reset-password/: the new password, after the mail's link or code; awaiting the owner. */
+    resetPassword: {
+      title: 'Set a new password',
+      description: 'Choose a new password for your account.',
+      heading: 'Set a new password',
+      intro: 'Choose a new password for {email}.',
+      passwordLabel: 'New password',
+      confirmLabel: 'Repeat the new password',
+      submit: 'Save the password',
+      expired: 'This page works only right after you open the link, or enter the code, of a password reset e-mail.',
+      again: 'Ask for a new e-mail',
+      errorSame: 'The new password must differ from the old one.',
+      errorUpdate: 'Couldn’t save the password. Try again later.',
     },
     /** /pro/connect/: connecting the extension to the account; awaiting the owner. */
     connect: {

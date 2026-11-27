@@ -1,0 +1,97 @@
+---
+/**
+ * /sign-up/: a new account with an address and a password (the `password`
+ * method; 404 when it is off), in a form posting to `/auth/password/`.
+ * Supabase Auth mails a link and a code to
+ * confirm the address; the sign-in page then asks for the code. A signed-in
+ * person goes on to `next`, or the sign-in page. Personal: never cached,
+ * never indexed.
+ */
+import AuthCard from '../../components/auth/AuthCard.astro';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { localeOfParam, messages } from '../../i18n';
+import { authConfig, enabledMethods, safeNext } from '../../lib/auth/config';
+import { authHref } from '../../lib/auth/server';
+import { ui } from '../../lib/auth/ui';
+
+export const prerender = false;
+
+const locale = localeOfParam(Astro.params.locale);
+const methods = enabledMethods();
+// No page here: the server answers with the site's 404 page.
+if (!locale || !methods.has('password')) return new Response(null, { status: 404 });
+const all = messages(locale).pages;
+const t = all.signUp;
+const s = all.signIn;
+Astro.response.headers.set('Cache-Control', 'no-store');
+
+const nextRaw = Astro.url.searchParams.get('next');
+const next = nextRaw ? safeNext(nextRaw, '') : '';
+if (Astro.locals.auth) return Astro.redirect(next || authHref(locale, 'signIn'), 303);
+
+const configured = authConfig() !== null;
+const errors: Record<string, string> = {
+  email: s.errorEmail,
+  send: s.errorSend,
+  rate: s.errorRate,
+  unavailable: s.unavailable,
+  exists: t.errorExists,
+  'password-weak': s.errorPasswordWeak,
+  'password-long': s.errorPasswordLong,
+  'password-mismatch': s.errorPasswordMismatch,
+};
+const error = errors[Astro.url.searchParams.get('error') ?? ''];
+---
+
+<BaseLayout locale={locale} page="signUp">
+  <AuthCard heading={t.heading} error={error}>
+    {!configured && <p>{s.unavailable}</p>}
+    {configured && (
+      <>
+        <form method="post" action="/auth/password/">
+          <p class={ui.note}>{t.intro}</p>
+          <input type="hidden" name="step" value="sign-up" />
+          <input type="hidden" name="locale" value={locale} />
+          {next && <input type="hidden" name="next" value={next} />}
+          <label for="email" class={`mt-4 ${ui.label}`}>
+            {s.emailLabel}
+          </label>
+          <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" class={ui.field} />
+          <label for="password" class={`mt-4 ${ui.label}`}>
+            {s.passwordLabel}
+          </label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            required
+            maxlength="72"
+            class={ui.field}
+          />
+          <label for="confirm" class={`mt-4 ${ui.label}`}>
+            {t.confirmLabel}
+          </label>
+          <input
+            id="confirm"
+            name="confirm"
+            type="password"
+            autocomplete="new-password"
+            required
+            maxlength="72"
+            class={ui.field}
+          />
+          <button type="submit" class={ui.primary}>
+            {t.submit}
+          </button>
+        </form>
+      </>
+    )}
+    <p slot="after" class={`mt-6 text-center ${ui.note}`}>
+      {t.haveAccount}{' '}
+      <a href={authHref(locale, 'signIn', next)} class={ui.link}>
+        {t.signIn}
+      </a>
+    </p>
+  </AuthCard>
+</BaseLayout>

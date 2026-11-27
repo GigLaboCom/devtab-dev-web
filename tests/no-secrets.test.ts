@@ -1,14 +1,15 @@
 /**
  * The site's server holds no secret: of the environment it reads only public
  * values (the API's internal address, the Supabase project's address and
- * publishable key, the site's address) and a rate limit, and nothing of it
+ * publishable key, the site's address, the sign-in methods it offers) and a
+ * rate limit, and nothing of it
  * names Supabase's secret key, which only the API may ever hold.
  */
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { authConfig } from '../src/lib/auth/config.ts';
+import { authConfig, enabledMethods } from '../src/lib/auth/config.ts';
 
 const root = new URL('../', import.meta.url).pathname;
 
@@ -18,6 +19,7 @@ const allowed = new Set([
   'DEVTAB_SUPABASE_URL',
   'DEVTAB_SUPABASE_PUBLISHABLE_KEY',
   'DEVTAB_RATE_SIGN_IN_PER_IP',
+  'DEVTAB_SIGN_IN_METHODS',
   'DEVTAB_EXTENSION_IDS',
   'SITE_URL',
   // Astro's own, set at build time.
@@ -94,4 +96,23 @@ test("the built site holds no secret key's name or value", () => {
       .map(file => file.slice(root.length)),
     [],
   );
+});
+
+test('the sign-in methods come from DEVTAB_SIGN_IN_METHODS: the e-mail alone unless it names others', () => {
+  const saved = process.env.DEVTAB_SIGN_IN_METHODS;
+  const methods = (value: string | undefined) => {
+    if (value === undefined) delete process.env.DEVTAB_SIGN_IN_METHODS;
+    else process.env.DEVTAB_SIGN_IN_METHODS = value;
+    return [...enabledMethods()];
+  };
+  try {
+    assert.deepEqual(methods(undefined), ['email']);
+    assert.deepEqual(methods(' '), ['email']);
+    assert.deepEqual(methods(' Password ,email'), ['password', 'email']);
+    assert.deepEqual(methods('password,sms'), ['password'], 'an unknown name is ignored');
+    assert.deepEqual(methods('sms'), [], 'nothing known: no method');
+  } finally {
+    if (saved === undefined) delete process.env.DEVTAB_SIGN_IN_METHODS;
+    else process.env.DEVTAB_SIGN_IN_METHODS = saved;
+  }
 });

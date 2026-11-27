@@ -23,6 +23,10 @@ interface ServerPage {
 const list = {
   pro: { path: 'pro/', index: true, session: false, signIn: false, script: false },
   signIn: { path: 'sign-in/', index: false, session: true, signIn: false, script: false },
+  // The pages of the `password` sign-in method (src/lib/auth/config.ts): 404 when it is off.
+  signUp: { path: 'sign-up/', index: false, session: true, signIn: false, script: false },
+  forgotPassword: { path: 'forgot-password/', index: false, session: true, signIn: false, script: false },
+  resetPassword: { path: 'reset-password/', index: false, session: true, signIn: false, script: false },
   connect: { path: 'pro/connect/', index: false, session: true, signIn: true, script: true },
 };
 

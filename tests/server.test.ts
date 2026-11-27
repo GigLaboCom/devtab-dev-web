@@ -2,12 +2,14 @@
  * The pages the server renders (src/lib/serverPages.ts), on the built server
  * (dist/server/entry.mjs, after `pnpm build`), against one stub (node:http)
  * standing in for the API's internal listener, which answers the plans of a
- * fixture, and for Supabase Auth, which accepts every sign-in mail and refuses
- * every code: every page in every locale with its language, canonical URL,
- * alternates, language switch and content security policy, and no script;
- * then what /pro/ shows, and the sign-in forms. Signing in for real, by the
- * code and the link of a real mail, is script/e2e-sign-in.ts, against the
- * local stack.
+ * fixture, and for Supabase Auth, which sends every mail, refuses every code
+ * but the reset code of `stubAuth`, knows one password, and signs sessions
+ * with tokens it checks itself: every page in every locale with its
+ * language, canonical URL, alternates, language switch and content security
+ * policy, and no script; then what /pro/ shows, and the forms of every
+ * sign-in method, with every method on, then with only some (more servers,
+ * the same stub). Signing in for real, by the code and the link of a real
+ * mail, is script/e2e-sign-in.ts, against the local stack.
  */
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -37,17 +39,133 @@ const urlOf = (locale: string, path: string) => new URL(pathOf(locale, path), or
 
 /** What the stub of the internal API answers, set by each test, and what Supabase Auth was asked. */
 const stub = { down: false, empty: false, available: [] as string[], asked: [] as string[] };
-const auth: { path: string; query: URLSearchParams; body: Record<string, unknown> }[] = [];
-/** The sign-in attempts the test server allows per client address in an hour. */
+const auth: { method: string; path: string; query: URLSearchParams; body: Record<string, unknown> }[] = [];
+/** The sign-in attempts the test servers allow per client address in an hour. */
 const LIMIT = 3;
 
+/** What the stub of Supabase Auth knows: one account with a password, and the code of a reset mail. */
+const stubAuth = {
+  email: 'person@example.invalid',
+  password: 'correct horse',
+  unconfirmed: 'waiting@example.invalid',
+  resetCode: '654321',
+  /** A PKCE code that the token endpoint exchanges (any verifier). */
+  goodCode: 'good-code',
+  userId: '00000000-0000-4000-8000-000000000001',
+  sessionId: '00000000-0000-4000-8000-0000000000aa',
+};
+const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+/** A token of the stub's session: HS256, so that supabase-js asks the stub (`GET /user`) to check it. */
+const stubToken = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({
+  sub: stubAuth.userId,
+  email: stubAuth.email,
+  session_id: stubAuth.sessionId,
+  aud: 'authenticated',
+  role: 'authenticated',
+  exp: Math.floor(Date.now() / 1000) + 86_400,
+})}.c3R1Yg`;
+const stubUser = {
+  id: stubAuth.userId,
+  aud: 'authenticated',
+  role: 'authenticated',
+  email: stubAuth.email,
+  app_metadata: {},
+  user_metadata: {},
+  created_at: '2026-11-01T00:00:00Z',
+};
+const stubSession = () => ({
+  access_token: stubToken,
+  token_type: 'bearer',
+  expires_in: 86_400,
+  expires_at: Math.floor(Date.now() / 1000) + 86_400,
+  refresh_token: 'stub-refresh',
+  user: stubUser,
+});
+
+/** Supabase Auth's answer to one request of the stub. */
+function authAnswer(
+  method: string,
+  path: string,
+  query: URLSearchParams,
+  body: Record<string, unknown>,
+  bearer: string,
+) {
+  const refuse = (status: number, code: string) => [status, { code, msg: code }] as const;
+  switch (`${method} ${path}`) {
+    case 'POST /auth/v1/otp':
+    case 'POST /auth/v1/recover':
+      return [200, {}] as const;
+    case 'POST /auth/v1/verify':
+      return body.type === 'recovery' && body.token === stubAuth.resetCode && body.email === stubAuth.email
+        ? ([200, stubSession()] as const)
+        : refuse(403, 'otp_expired');
+    case 'POST /auth/v1/token':
+      if (query.get('grant_type') === 'password') {
+        if (body.email === stubAuth.unconfirmed) return refuse(400, 'email_not_confirmed');
+        return body.email === stubAuth.email && body.password === stubAuth.password
+          ? ([200, stubSession()] as const)
+          : refuse(400, 'invalid_credentials');
+      }
+      return body.auth_code === stubAuth.goodCode && body.code_verifier
+        ? ([200, stubSession()] as const)
+        : refuse(403, 'flow_state_not_found');
+    case 'POST /auth/v1/signup':
+      // A project that confirms addresses: the new user, and no session until the mail's link or code.
+      return body.password === 'short'
+        ? refuse(422, 'weak_password')
+        : ([200, { ...stubUser, email: body.email }] as const);
+    case 'GET /auth/v1/user':
+      return bearer === stubToken ? ([200, stubUser] as const) : refuse(401, 'bad_jwt');
+    case 'PUT /auth/v1/user':
+      if (bearer !== stubToken) return refuse(401, 'bad_jwt');
+      return body.password === stubAuth.password ? refuse(422, 'same_password') : ([200, stubUser] as const);
+    case 'POST /auth/v1/logout':
+      return [204, null] as const;
+    default:
+      return refuse(404, 'not_found');
+  }
+}
+
 let api: Server;
-let site: ChildProcess;
+let apiBase: string;
+const sites: ChildProcess[] = [];
 let base: string;
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   return (server.address() as AddressInfo).port;
+}
+
+/** Starts the built server against the stub, with `methods` as DEVTAB_SIGN_IN_METHODS (none: unset); its address. */
+async function startSite(methods?: string): Promise<string> {
+  const probe = createServer();
+  const port = await listen(probe);
+  await new Promise(resolve => probe.close(resolve));
+  const site = spawn(process.execPath, [entry], {
+    env: {
+      PATH: process.env.PATH,
+      HOST: '127.0.0.1',
+      PORT: String(port),
+      DEVTAB_API_INTERNAL_URL: apiBase,
+      DEVTAB_SUPABASE_URL: apiBase,
+      // Not a key: the stub takes anything.
+      DEVTAB_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_stub',
+      DEVTAB_RATE_SIGN_IN_PER_IP: String(LIMIT),
+      ...(methods === undefined ? {} : { DEVTAB_SIGN_IN_METHODS: methods }),
+    },
+    stdio: 'ignore',
+  });
+  sites.push(site);
+  const address = `http://127.0.0.1:${port}`;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await fetch(`${address}/`);
+      return address;
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error('the built server did not start: run pnpm build first');
 }
 
 before(async () => {
@@ -57,12 +175,15 @@ before(async () => {
       let body = '';
       request.on('data', chunk => (body += chunk));
       request.on('end', () => {
-        auth.push({ path: url.pathname, query: url.searchParams, body: body ? JSON.parse(body) : {} });
-        // A mail is always sent; a code is never right.
-        const [status, answer] =
-          url.pathname === '/auth/v1/otp' ? [200, '{}'] : [403, '{"code":"otp_expired","msg":"expired"}'];
-        response.writeHead(status, { 'content-type': 'application/json' });
-        response.end(answer);
+        const method = request.method ?? 'GET';
+        const parsed = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        auth.push({ method, path: url.pathname, query: url.searchParams, body: parsed });
+        const bearer = request.headers.authorization?.replace(/^Bearer /, '') ?? '';
+        const [status, answer] = authAnswer(method, url.pathname, url.searchParams, parsed, bearer);
+        // Errors as Supabase Auth words them since this API version: `{"code": "<error code>", "msg": …}`.
+        const headers = { 'x-supabase-api-version': '2024-01-01' };
+        response.writeHead(status, answer === null ? headers : { ...headers, 'content-type': 'application/json' });
+        response.end(answer === null ? undefined : JSON.stringify(answer));
       });
       return;
     }
@@ -78,38 +199,13 @@ before(async () => {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ ...fixture, locale: url.searchParams.get('locale'), plans }));
   });
-  const apiPort = await listen(api);
-
-  const probe = createServer();
-  const port = await listen(probe);
-  await new Promise(resolve => probe.close(resolve));
-  site = spawn(process.execPath, [entry], {
-    env: {
-      PATH: process.env.PATH,
-      HOST: '127.0.0.1',
-      PORT: String(port),
-      DEVTAB_API_INTERNAL_URL: `http://127.0.0.1:${apiPort}`,
-      DEVTAB_SUPABASE_URL: `http://127.0.0.1:${apiPort}`,
-      // Not a key: the stub takes anything.
-      DEVTAB_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_stub',
-      DEVTAB_RATE_SIGN_IN_PER_IP: String(LIMIT),
-    },
-    stdio: 'ignore',
-  });
-  base = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      await fetch(`${base}/`);
-      return;
-    } catch {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-  }
-  throw new Error('the built server did not start: run pnpm build first');
+  apiBase = `http://127.0.0.1:${await listen(api)}`;
+  // Every method on: every page of signing in exists.
+  base = await startSite('email,password');
 });
 
 after(() => {
-  site?.kill();
+  for (const site of sites) site.kill();
   api?.close();
 });
 
@@ -355,4 +451,299 @@ test('/auth/connect/ answers only the site’s own pages, and only for a signed-
   const signedOut = await post({ origin: base });
   assert.equal(signedOut.status, 401);
   assert.equal(signedOut.headers.get('cache-control'), 'no-store');
+});
+
+/** The cookies a browser keeps from a series of answers, as one `Cookie` header. */
+class Jar {
+  readonly cookies = new Map<string, string>();
+  take(setCookies: string[]): this {
+    for (const line of setCookies) {
+      const [pair = '', ...attributes] = line.split(';');
+      const name = pair.slice(0, pair.indexOf('='));
+      const value = pair.slice(pair.indexOf('=') + 1);
+      const gone = attributes.some(a => /^\s*(max-age=0|expires=thu, 01 jan 1970)/i.test(a));
+      if (gone || value === '') this.cookies.delete(name);
+      else this.cookies.set(name, value);
+    }
+    return this;
+  }
+  has(name: string | RegExp): boolean {
+    return [...this.cookies.keys()].some(key => (typeof name === 'string' ? key === name : name.test(key)));
+  }
+  get header(): string {
+    return [...this.cookies].map(([name, value]) => `${name}=${value}`).join('; ');
+  }
+}
+
+async function page(path: string, cookie = '', at = base) {
+  const response = await fetch(`${at}${path}`, { headers: { cookie }, redirect: 'manual' });
+  const html = await response.text();
+  return { status: response.status, html, text: text(html), location: response.headers.get('location') };
+}
+
+const hrefs = (html: string) => tags(html, 'a').map(link => link.get('href') ?? '');
+const actions = (html: string) => tags(html, 'form').map(form => form.get('action') ?? '');
+
+test('with every method on, the sign-in page offers a password and the e-mail, and links the other pages', async () => {
+  for (const locale of locales) {
+    const t = catalogues[locale].pages.signIn;
+    const next = pathOf(locale, 'pro/');
+    const { html, text: words } = await page(`${pathOf(locale, 'sign-in/')}?next=${encodeURIComponent(next)}`);
+    assert.deepEqual(actions(html), ['/auth/password/', '/auth/sign-in/'], locale);
+    assert.ok(hrefs(html).includes(`${pathOf(locale, 'forgot-password/')}?next=${encodeURIComponent(next)}`));
+    assert.ok(hrefs(html).includes(`${pathOf(locale, 'sign-up/')}?next=${encodeURIComponent(next)}`));
+    for (const phrase of [t.passwordLabel, t.forgot, t.intro, t.noAccount]) {
+      assert.ok(words.includes(phrase), `${locale}: ${phrase}`);
+    }
+    // The page's own error words, and none it does not know.
+    const wrong = await page(`${pathOf(locale, 'sign-in/')}?error=credentials`);
+    assert.ok(wrong.text.includes(t.errorCredentials), locale);
+    assert.ok(!(await page(`${pathOf(locale, 'sign-in/')}?error=%3Cb%3E`)).html.includes('role="alert"'));
+  }
+});
+
+test('a password signs in, and a wrong or unconfirmed one says so without a session', async () => {
+  auth.length = 0;
+  const wrong = await post(
+    '/auth/password/',
+    { step: 'sign-in', email: stubAuth.email, password: 'wrong', locale: 'en' },
+    '198.51.100.1',
+  );
+  assert.deepEqual([wrong.status, wrong.location], [303, '/sign-in/?error=credentials']);
+  assert.ok(!wrong.cookies.some(c => c.startsWith('sb-')), 'no session');
+  const [asked] = auth;
+  assert.deepEqual(
+    [asked.method, asked.path, asked.query.get('grant_type'), asked.body.email, asked.body.password],
+    ['POST', '/auth/v1/token', 'password', stubAuth.email, 'wrong'],
+  );
+  const waiting = await post(
+    '/auth/password/',
+    { step: 'sign-in', email: stubAuth.unconfirmed, password: 'anything', locale: 'ru' },
+    '198.51.100.1',
+  );
+  assert.equal(waiting.location, '/ru/sign-in/?error=unconfirmed');
+  const bad = await post(
+    '/auth/password/',
+    { step: 'sign-in', email: 'nope', password: 'x', locale: 'en' },
+    '198.51.100.2',
+  );
+  assert.equal(bad.location, '/sign-in/?error=email');
+
+  const right = await post(
+    '/auth/password/',
+    { step: 'sign-in', email: 'Person@Example.invalid', password: stubAuth.password, locale: 'ru', next: '/ru/pro/' },
+    '198.51.100.2',
+  );
+  assert.deepEqual([right.status, right.location], [303, '/ru/pro/']);
+  const jar = new Jar().take(right.cookies);
+  assert.ok(jar.has(/^sb-127-auth-token(\.\d+)?$/), 'the session');
+  assert.ok(right.cookies.filter(c => c.startsWith('sb-')).every(c => /HttpOnly/i.test(c)));
+  const signedIn = await page('/ru/sign-in/', jar.header);
+  assert.ok(signedIn.text.includes(ru.pages.signIn.signedIn.replace('{email}', stubAuth.email)), signedIn.text);
+  const out = await post('/auth/signout/', { locale: 'ru' }, '198.51.100.2', jar.header);
+  assert.equal(out.location, '/ru/sign-in/');
+  assert.ok(new Jar().take(right.cookies).take(out.cookies).cookies.size === 0, 'signed out: no cookie left');
+});
+
+test('signing up checks the passwords, asks Supabase Auth to confirm the address, and waits for the code', async () => {
+  auth.length = 0;
+  const fields = { step: 'sign-up', email: 'New@Example.invalid', locale: 'ru', next: '/ru/pro/' };
+  const mismatch = await post(
+    '/auth/password/',
+    { ...fields, password: 'one two', confirm: 'two one' },
+    '198.51.100.3',
+  );
+  assert.equal(mismatch.location, '/ru/sign-up/?next=%2Fru%2Fpro%2F&error=password-mismatch');
+  const long = 'x'.repeat(73);
+  const tooLong = await post('/auth/password/', { ...fields, password: long, confirm: long }, '198.51.100.3');
+  assert.equal(tooLong.location, '/ru/sign-up/?next=%2Fru%2Fpro%2F&error=password-long');
+  assert.equal(auth.length, 0, 'never reaches Supabase Auth');
+  const weak = await post('/auth/password/', { ...fields, password: 'short', confirm: 'short' }, '198.51.100.3');
+  assert.equal(weak.location, '/ru/sign-up/?next=%2Fru%2Fpro%2F&error=password-weak');
+  const wording = await page(`/ru/sign-up/?error=password-weak`);
+  assert.ok(wording.text.includes(ru.pages.signIn.errorPasswordWeak));
+
+  const made = await post(
+    '/auth/password/',
+    { ...fields, password: 'a long one', confirm: 'a long one' },
+    '198.51.100.4',
+  );
+  assert.deepEqual([made.status, made.location], [303, '/ru/sign-in/?next=%2Fru%2Fpro%2F']);
+  const asked = auth.at(-1)!;
+  assert.equal(asked.path, '/auth/v1/signup');
+  assert.deepEqual(
+    [asked.body.email, asked.body.password, asked.body.data],
+    ['new@example.invalid', 'a long one', { locale: 'ru' }],
+  );
+  assert.ok(asked.body.code_challenge, "the mail's link is a PKCE one");
+  assert.equal(asked.query.get('redirect_to'), `${base}/auth/callback/?locale=ru&next=%2Fru%2Fpro%2F`);
+  const jar = new Jar().take(made.cookies);
+  assert.ok(
+    jar.has('devtab-sign-in') && jar.has(/code-verifier$/),
+    'the address waits for the code, the verifier for the link',
+  );
+  const waiting = await page('/ru/sign-in/?next=%2Fru%2Fpro%2F', jar.header);
+  assert.ok(waiting.text.includes(ru.pages.signIn.sent.replace('{email}', 'new@example.invalid')), waiting.text);
+  assert.ok(waiting.text.includes(ru.pages.signIn.codeLabel));
+});
+
+test('a forgotten password: the mail, its code, the new password, only in the session the reset started', async () => {
+  auth.length = 0;
+  const bad = await post('/auth/password/', { step: 'forgot', email: 'nope', locale: 'en' }, '198.51.100.5');
+  assert.equal(bad.location, '/forgot-password/?error=email');
+  const sent = await post('/auth/password/', { step: 'forgot', email: stubAuth.email, locale: 'en' }, '198.51.100.5');
+  assert.deepEqual([sent.status, sent.location], [303, '/forgot-password/']);
+  const asked = auth.at(-1)!;
+  assert.deepEqual([asked.path, asked.body.email], ['/auth/v1/recover', stubAuth.email]);
+  assert.ok(asked.body.code_challenge);
+  assert.equal(asked.query.get('redirect_to'), `${base}/auth/callback/?locale=en&via=recovery`);
+  const jar = new Jar().take(sent.cookies);
+  assert.ok(jar.has('devtab-reset-address'));
+  const waiting = await page('/forgot-password/', jar.header);
+  assert.ok(waiting.text.includes(en.pages.forgotPassword.sent.replace('{email}', stubAuth.email)));
+  assert.deepEqual(actions(waiting.html), ['/auth/password/', '/auth/password/']);
+
+  const wrong = await post(
+    '/auth/password/',
+    { step: 'code', code: '111111', locale: 'en' },
+    '198.51.100.5',
+    jar.header,
+  );
+  assert.equal(wrong.location, '/forgot-password/?error=code');
+  const right = await post(
+    '/auth/password/',
+    { step: 'code', code: stubAuth.resetCode, locale: 'en' },
+    '198.51.100.6',
+    jar.header,
+  );
+  assert.deepEqual([right.status, right.location], [303, '/reset-password/']);
+  jar.take(right.cookies);
+  assert.ok(!jar.has('devtab-reset-address'), 'the address is forgotten');
+  assert.equal(jar.cookies.get('devtab-reset'), stubAuth.sessionId, 'the reset is bound to its session');
+  assert.ok(jar.has(/^sb-127-auth-token(\.\d+)?$/));
+
+  const form = await page('/reset-password/', jar.header);
+  assert.ok(form.text.includes(en.pages.resetPassword.intro.replace('{email}', stubAuth.email)), form.text);
+  assert.deepEqual(actions(form.html), ['/auth/password/']);
+  // The same session without the mark: no form.
+  const session = [...jar.cookies]
+    .filter(([name]) => name.startsWith('sb-'))
+    .map(([n, v]) => `${n}=${v}`)
+    .join('; ');
+  const unmarked = await page('/reset-password/', session);
+  assert.ok(unmarked.text.includes(en.pages.resetPassword.expired));
+  assert.deepEqual(actions(unmarked.html), []);
+  const refused = await post(
+    '/auth/password/',
+    { step: 'update', password: 'p1', confirm: 'p1', locale: 'en' },
+    '198.51.100.7',
+    session,
+  );
+  assert.equal(refused.location, '/reset-password/');
+
+  const update = (password: string, confirm = password) =>
+    post('/auth/password/', { step: 'update', password, confirm, locale: 'en' }, '198.51.100.8', jar.header);
+  assert.equal((await update('new one', 'other')).location, '/reset-password/?error=password-mismatch');
+  assert.equal((await update(stubAuth.password)).location, '/reset-password/?error=password-same');
+  const saved = await update('a new password');
+  assert.deepEqual([saved.status, saved.location], [303, '/sign-in/?notice=password']);
+  assert.deepEqual(
+    [auth.at(-1)!.method, auth.at(-1)!.path, auth.at(-1)!.body.password],
+    ['PUT', '/auth/v1/user', 'a new password'],
+  );
+  jar.take(saved.cookies);
+  assert.ok(!jar.has('devtab-reset'), 'the mark is gone');
+  const notice = await page('/sign-in/?notice=password', jar.header);
+  assert.ok(notice.text.includes(en.pages.signIn.passwordChanged));
+});
+
+test("a reset mail's link comes back through the callback to the new password, and fails to the reset page", async () => {
+  const sent = await post(
+    '/auth/password/',
+    { step: 'forgot', email: stubAuth.email, locale: 'ru', next: '/ru/pro/' },
+    '198.51.100.9',
+  );
+  const jar = new Jar().take(sent.cookies);
+  const back = await page(
+    `/auth/callback/?code=${stubAuth.goodCode}&locale=ru&next=%2Fru%2Fpro%2F&via=recovery`,
+    jar.header,
+  );
+  assert.deepEqual([back.status, back.location], [303, '/ru/reset-password/?next=%2Fru%2Fpro%2F']);
+  const response = await fetch(`${base}/auth/callback/?code=${stubAuth.goodCode}&locale=ru&via=recovery`, {
+    headers: { cookie: jar.header },
+    redirect: 'manual',
+  });
+  jar.take(response.headers.getSetCookie());
+  assert.equal(jar.cookies.get('devtab-reset'), stubAuth.sessionId);
+
+  const elsewhere = await page(`/auth/callback/?code=${stubAuth.goodCode}&locale=ru&via=recovery`);
+  assert.equal(elsewhere.location, '/ru/forgot-password/?error=link', 'no verifier in another browser');
+});
+
+test('the password forms refuse other sites and count attempts with the other forms', async () => {
+  const crossSite = await post(
+    '/auth/password/',
+    { step: 'sign-in', email: stubAuth.email, password: 'x' },
+    '198.51.100.12',
+    '',
+    'https://elsewhere.example.invalid',
+  );
+  assert.equal(crossSite.status, 403);
+  const from = '198.51.100.13';
+  await post('/auth/sign-in/', { step: 'email', email: 'c@example.invalid', locale: 'en' }, from);
+  for (let n = 1; n < LIMIT; n += 1) {
+    await post('/auth/password/', { step: 'forgot', email: 'c@example.invalid', locale: 'en' }, from);
+  }
+  const over = await post(
+    '/auth/password/',
+    { step: 'sign-in', email: 'c@example.invalid', password: 'x', locale: 'en' },
+    from,
+  );
+  assert.equal(over.location, '/sign-in/?error=rate');
+});
+
+test('a method that is off is not offered, and its pages and endpoints are not found', async () => {
+  // DEVTAB_SIGN_IN_METHODS unset: the e-mail alone.
+  const emailOnly = await startSite();
+  const signIn = await page('/sign-in/', '', emailOnly);
+  assert.deepEqual(actions(signIn.html), ['/auth/sign-in/']);
+  assert.ok(!hrefs(signIn.html).some(href => /sign-up|forgot/.test(href)), 'no other method');
+  for (const path of ['/sign-up/', '/ru/forgot-password/', '/reset-password/']) {
+    const { status, text: words } = await page(path, '', emailOnly);
+    assert.equal(status, 404, path);
+    assert.ok(words.includes(en.notFound.message), `${path}: the site's 404 page`);
+  }
+  const password = await fetch(`${emailOnly}/auth/password/`, {
+    method: 'POST',
+    headers: { origin: emailOnly, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ step: 'sign-in', email: stubAuth.email, password: stubAuth.password }),
+    redirect: 'manual',
+  });
+  assert.equal(password.status, 404);
+
+  // A password alone: no e-mail form, but the code of a sign-up's confirmation still works.
+  const passwordOnly = await startSite('password');
+  const page_ = await page('/sign-in/', '', passwordOnly);
+  assert.deepEqual(actions(page_.html), ['/auth/password/']);
+  assert.ok(!page_.text.includes(en.pages.signIn.intro));
+  const form = (fields: Record<string, string>) =>
+    fetch(`${passwordOnly}/auth/sign-in/`, {
+      method: 'POST',
+      headers: {
+        origin: passwordOnly,
+        cookie: 'devtab-sign-in=new%40example.invalid',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams(fields),
+      redirect: 'manual',
+    });
+  assert.equal((await form({ step: 'email', email: 'd@example.invalid' })).status, 404);
+  const code = await form({ step: 'code', code: '123456' });
+  assert.deepEqual([code.status, code.headers.get('location')], [303, '/sign-in/?error=code']);
+
+  // Nothing known: no way to sign in, and the page says so.
+  const none = await startSite('carrier-pigeon');
+  const nothing = await page('/sign-in/', '', none);
+  assert.deepEqual(actions(nothing.html), []);
+  assert.ok(nothing.text.includes(en.pages.signIn.unavailable));
 });
