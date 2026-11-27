@@ -11,6 +11,9 @@ const en = {
   site: {
     name: wordmark,
     skipToContent: 'Skip to content',
+    themeSystem: 'Theme: as the system’s. Switch to light',
+    themeLight: 'Theme: light. Switch to dark',
+    themeDark: 'Theme: dark. Switch to the system’s',
     languageSwitch: 'Language',
   },
   /** One entry per page of `src/lib/pages.ts`: its title and description. */
@@ -35,6 +38,13 @@ const en = {
       listLabel: 'Pro plans',
       perMonth: 'per month',
       perYear: 'per year',
+      perMemberMonth: 'per member a month',
+      perMemberYear: 'per member a year',
+      fromMembers: '{price} each from {count} members',
+      teamsHeading: 'For teams',
+      teamsIntro: 'One subscription for the whole team. Invite members by e-mail; each connects their own browsers.',
+      free: 'Free',
+      freeNote: 'Free forever',
       choose: 'Choose {name}',
       soon: 'Soon',
       notOpen: 'Purchases are not open yet.',

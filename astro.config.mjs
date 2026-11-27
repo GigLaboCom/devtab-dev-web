@@ -3,7 +3,9 @@ import node from '@astrojs/node';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'astro/config';
 import { defaultLocale, locales } from './src/i18n/config.ts';
+import { createHash } from 'node:crypto';
 import { siteUrl } from './src/lib/site.ts';
+import { themeScript } from './src/lib/themeScript.ts';
 
 export default defineConfig({
   site: siteUrl,
@@ -36,6 +38,10 @@ export default defineConfig({
     // runs, nothing loads from another host, and forms post only to the site.
     csp: {
       directives: ["default-src 'self'", "form-action 'self'", "object-src 'none'", "base-uri 'self'"],
+      // The theme's script in <head> is inline so that it runs before the first paint; it is allowed by its hash.
+      scriptDirective: {
+        hashes: [`sha256-${createHash('sha256').update(themeScript).digest('base64')}`],
+      },
     },
   },
 

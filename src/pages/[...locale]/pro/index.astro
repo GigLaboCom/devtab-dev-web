@@ -29,59 +29,132 @@ if (catalogue) {
 const cards = catalogue?.plans ?? [];
 const open = cards.some(plan => plan.kind === 'paid' && plan.available);
 const checkoutHref = (id: string) => `/pro/checkout/?${new URLSearchParams({ plan: id })}`;
+/** A free plan's price: zero in the paid plans' currency. */
+const zero = cards.find(plan => plan.price)?.price?.currency;
+const personal = cards.filter(plan => plan.minMembers == null);
+const teams = cards.filter(plan => plan.minMembers != null);
+const groups = [
+  { id: 'personal', heading: null, intro: null, plans: personal },
+  { id: 'teams', heading: t.teamsHeading, intro: t.teamsIntro, plans: teams },
+].filter(group => group.plans.length > 0);
+const period = (plan: (typeof cards)[number]) =>
+  plan.minMembers == null
+    ? plan.term === 'year'
+      ? t.perYear
+      : t.perMonth
+    : plan.term === 'year'
+      ? t.perMemberYear
+      : t.perMemberMonth;
+/** "€5.00 each from 5 members": the steps after the first, in the card's currency. */
+const steps = (plan: (typeof cards)[number]) => {
+  if (!plan.tiers || !plan.price) return [];
+  const currency = plan.price.currency;
+  return plan.tiers.slice(1).map((tier, index) => {
+    const from = (plan.tiers?.[index]?.upTo ?? 0) + 1;
+    return fill(t.fromMembers, { price: formatPrice({ amount: tier.amount, currency }, locale), count: String(from) });
+  });
+};
 ---
 
-<BaseLayout locale={locale} page="pro">
-  <h1 class="text-4xl font-semibold tracking-tight">{t.heading}</h1>
+<BaseLayout locale={locale} page="pro" wide>
+  <h1 class="text-4xl font-semibold tracking-tight sm:text-5xl">{t.heading}</h1>
   {catalogue === null && <p class="mt-4 text-lg">{t.unavailable}</p>}
   {catalogue !== null && cards.length === 0 && <p class="mt-4 text-lg">{t.empty}</p>}
-  {cards.length > 0 && !open && <p class="mt-4 text-lg">{t.notOpen}</p>}
-  {cards.length > 0 && (
-    <ul role="list" aria-label={t.listLabel} class="mt-8 grid gap-4 sm:grid-cols-3">
-      {cards.map(plan => (
-        <li>
-          <article
-            aria-labelledby={`plan-${plan.id}-name`}
-            lang={plan.locale === locale ? undefined : plan.locale}
-            class="flex h-full flex-col rounded-md border border-border p-5">
-            <h2 id={`plan-${plan.id}-name`} class="text-lg font-semibold">
-              {plan.name}
-              {plan.badge && <span class="sr-only">, </span>}
-              {plan.badge && <span class="ml-2 text-sm font-normal text-muted-foreground">{plan.badge}</span>}
-            </h2>
-            {plan.price && (
-              <p class="mt-2">
-                <span class="text-2xl font-semibold">{formatPrice(plan.price, locale)}</span>{' '}
-                <span class="text-muted-foreground">{plan.term === 'year' ? t.perYear : t.perMonth}</span>
-              </p>
-            )}
-            {plan.summary && <p class="mt-2">{plan.summary}</p>}
-            {plan.priceNote && <p class="mt-1 text-sm text-muted-foreground">{plan.priceNote}</p>}
-            {plan.includes.length > 0 && (
-              <ul class="mt-4 list-disc pl-5 text-sm">
-                {plan.includes.map(line => (
-                  <li>{line}</li>
-                ))}
-              </ul>
-            )}
-            {plan.kind === 'paid' && (
-              <p class="mt-auto pt-6">
-                {plan.available ? (
-                  <a
-                    href={checkoutHref(plan.id)}
-                    class="inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
-                    {fill(t.choose, { name: plan.name })}
-                  </a>
-                ) : (
-                  <span class="inline-flex rounded-md border border-border px-4 py-2 text-sm text-muted-foreground">
-                    {t.soon}
-                  </span>
+  {cards.length > 0 && !open && <p class="mt-4 text-lg text-muted-foreground">{t.notOpen}</p>}
+  {groups.map(group => (
+    <section aria-labelledby={group.heading ? `plans-${group.id}` : undefined} class="mt-10">
+      {group.heading && (
+        <>
+          <h2 id={`plans-${group.id}`} class="text-2xl font-semibold tracking-tight">
+            {group.heading}
+          </h2>
+          {group.intro && <p class="mt-2 text-muted-foreground">{group.intro}</p>}
+        </>
+      )}
+      <ul
+        role="list"
+        aria-label={group.id === 'personal' ? t.listLabel : (group.heading ?? undefined)}
+        class={`mt-6 grid gap-5 ${group.plans.length >= 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+        {group.plans.map(plan => {
+          const featured = Boolean(plan.badge);
+          return (
+            <li>
+              <article
+                aria-labelledby={`plan-${plan.id}-name`}
+                lang={plan.locale === locale ? undefined : plan.locale}
+                class={`relative flex h-full flex-col rounded-xl border bg-card p-6 shadow-sm ${
+                  featured ? 'border-accent ring-1 ring-accent' : 'border-border'
+                }`}>
+                {plan.badge && (
+                  <p class="absolute -top-3 left-6 rounded-full bg-accent px-3 py-0.5 text-xs font-medium text-accent-foreground">
+                    {plan.badge}
+                  </p>
                 )}
-              </p>
-            )}
-          </article>
-        </li>
-      ))}
-    </ul>
-  )}
+                <h3 id={`plan-${plan.id}-name`} class="text-base font-semibold">
+                  {plan.name}
+                  {plan.badge && <span class="sr-only">, {plan.badge}</span>}
+                </h3>
+                <p class="mt-4 flex items-baseline gap-2">
+                  {plan.price ? (
+                    <>
+                      <span class="text-4xl font-semibold tracking-tight">{formatPrice(plan.price, locale)}</span>
+                      <span class="text-sm text-muted-foreground">{period(plan)}</span>
+                    </>
+                  ) : (
+                    <span class="text-4xl font-semibold tracking-tight">
+                      {zero ? formatPrice({ amount: 0, currency: zero }, locale) : t.free}
+                    </span>
+                  )}
+                </p>
+                {steps(plan).map(step => (
+                  <p class="mt-1 text-sm font-medium text-accent">{step}</p>
+                ))}
+                {plan.summary && <p class="mt-4 text-sm">{plan.summary}</p>}
+                {plan.priceNote && <p class="mt-1 text-xs text-muted-foreground">{plan.priceNote}</p>}
+                {plan.includes.length > 0 && (
+                  <ul class="mt-6 space-y-2 border-t border-border pt-6 text-sm">
+                    {plan.includes.map(line => (
+                      <li class="flex gap-2">
+                        <svg
+                          viewBox="0 0 24 24"
+                          class="mt-0.5 size-4 shrink-0 text-accent"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.5"
+                          aria-hidden="true">
+                          <path d="M5 12.5l4.5 4.5L19 7.5"></path>
+                        </svg>
+                        <span>{line}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p class="mt-auto pt-8">
+                  {plan.kind === 'paid' ? (
+                    plan.available ? (
+                      <a
+                        href={checkoutHref(plan.id)}
+                        class={`flex w-full justify-center rounded-md px-4 py-2.5 text-sm font-medium ${
+                          featured ? 'bg-accent text-accent-foreground' : 'bg-primary text-primary-foreground'
+                        } hover:opacity-90`}>
+                        {fill(t.choose, { name: plan.name })}
+                      </a>
+                    ) : (
+                      <span class="flex w-full justify-center rounded-md border border-border px-4 py-2.5 text-sm text-muted-foreground">
+                        {t.soon}
+                      </span>
+                    )
+                  ) : (
+                    <span class="flex w-full justify-center rounded-md bg-muted px-4 py-2.5 text-sm text-muted-foreground">
+                      {t.freeNote}
+                    </span>
+                  )}
+                </p>
+              </article>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  ))}
 </BaseLayout>

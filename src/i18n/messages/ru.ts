@@ -7,6 +7,9 @@ export default {
   site: {
     name: wordmark,
     skipToContent: 'Перейти к содержимому',
+    themeSystem: 'Тема: как в системе. Переключить на светлую',
+    themeLight: 'Тема: светлая. Переключить на тёмную',
+    themeDark: 'Тема: тёмная. Переключить на системную',
     languageSwitch: 'Язык',
   },
   pages: {
@@ -24,6 +27,13 @@ export default {
       listLabel: 'Планы Pro',
       perMonth: 'в месяц',
       perYear: 'в год',
+      perMemberMonth: 'за участника в месяц',
+      perMemberYear: 'за участника в год',
+      fromMembers: '{price} за каждого от {count} участников',
+      teamsHeading: 'Для команд',
+      teamsIntro: 'Одна подписка на всю команду. Пригласите участников по почте — каждый подключит свои браузеры.',
+      free: 'Бесплатно',
+      freeNote: 'Бесплатно навсегда',
       choose: 'Выбрать {name}',
       soon: 'Скоро',
       notOpen: 'Покупка пока не открыта.',

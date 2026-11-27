@@ -1,0 +1,62 @@
+---
+/**
+ * The theme switch in the header: system → light → dark, by one button whose
+ * label says the theme in force and what a press does. The choice is kept in
+ * localStorage (`devtab-theme`) and set as `data-theme` on <html> by the
+ * script in <head> (BaseLayout.astro) before the page is painted, so that a
+ * chosen theme never flashes the other one. Without script the button stays
+ * hidden and the system's theme applies.
+ */
+import { messages, type Locale } from '../i18n';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const t = messages(locale).site;
+---
+
+<button
+  type="button"
+  id="theme-switch"
+  hidden
+  class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+  data-label-system={t.themeSystem}
+  data-label-light={t.themeLight}
+  data-label-dark={t.themeDark}
+  aria-label={t.themeSystem}
+  title={t.themeSystem}>
+  <svg
+    data-icon="system"
+    viewBox="0 0 24 24"
+    class="size-4"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    aria-hidden="true">
+    <rect x="3" y="4" width="18" height="12" rx="2"></rect>
+    <path d="M8 20h8M12 16v4"></path>
+  </svg>
+  <svg
+    data-icon="light"
+    viewBox="0 0 24 24"
+    class="hidden size-4"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    aria-hidden="true">
+    <circle cx="12" cy="12" r="4"></circle>
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+  </svg>
+  <svg
+    data-icon="dark"
+    viewBox="0 0 24 24"
+    class="hidden size-4"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    aria-hidden="true">
+    <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>
+  </svg>
+</button>

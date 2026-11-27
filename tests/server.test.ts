@@ -157,7 +157,9 @@ test('every server page exists in every locale, with its language, canonical URL
       // The server sends the policy as a header; the static pages carry it in a meta tag.
       const policy = headers.get('content-security-policy') ?? undefined;
       assert.deepEqual(cspProblems(html, policy), [], `${where}: content security policy`);
-      if (!page.script) assert.deepEqual(tags(html, 'script'), [], `${where}: no client-side script`);
+      // Every page runs the theme's script in <head>; a page with `script` one more of its own.
+      const scripts = tags(html, 'script').filter(script => !script.has('data-theme-script'));
+      if (!page.script) assert.deepEqual(scripts, [], `${where}: no client-side script but the theme's`);
     }
   }
 });
@@ -169,7 +171,7 @@ test('/pro/ shows every plan with its price, and "soon" where a plan cannot be b
     const { status, headers, html } = await get(pathOf(locale, 'pro/'));
     assert.equal(status, 200);
     assert.equal(headers.get('cache-control'), 'public, max-age=300');
-    const names = tags(html, 'h2').map(tag => tag.get('id'));
+    const names = tags(html, 'h3').map(tag => tag.get('id'));
     assert.deepEqual(names, ['plan-free-name', 'plan-pro-monthly-name', 'plan-pro-annual-name'], locale);
     const page = text(html);
     for (const plan of fixture.plans) {

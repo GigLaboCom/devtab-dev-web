@@ -15,10 +15,15 @@
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
+  --color-card: var(--card);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--accent-soft);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-ring: var(--ring);
-  --radius-md: var(--radius);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-xl: var(--radius);
 }
 /* `font-sans` and `font-mono` read --font-sans and --font-mono, which tokens.css sets. */
 
