@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# Runs the built site's server (dist/server/entry.mjs; `pnpm build` first)
+# for local checks: on 127.0.0.1:4321, calling the API's internal listener at
+# http://127.0.0.1:8081, and with sign-in through the local stack when it is
+# running (script/auth-up): its address, and its publishable key read from
+# `supabase status` now, never written into a file. Stop it with Ctrl-C.
+#
+#   script/site-server
+#
+# HOST, PORT, DEVTAB_API_INTERNAL_URL, DEVTAB_SUPABASE_URL and
+# DEVTAB_SUPABASE_PUBLISHABLE_KEY override the defaults. Sign-in mails link
+# back to this server: the local Auth accepts 127.0.0.1:4321 and
+# localhost:4321 (supabase/config.toml).
+
+set -euo pipefail
+
+# shellcheck source=lib/supabase.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/supabase.sh"
+cd "$root"
+
+if [[ ! -f dist/server/entry.mjs ]]; then
+  echo "No build: run pnpm build first." >&2
+  exit 1
+fi
+
+export HOST="${HOST:-127.0.0.1}"
+export PORT="${PORT:-4321}"
+export DEVTAB_API_INTERNAL_URL="${DEVTAB_API_INTERNAL_URL:-http://127.0.0.1:8081}"
+if [[ -z "${DEVTAB_SUPABASE_PUBLISHABLE_KEY:-}" ]]; then
+  DEVTAB_SUPABASE_PUBLISHABLE_KEY="$(local_status_value PUBLISHABLE_KEY || true)"
+fi
+if [[ -n "$DEVTAB_SUPABASE_PUBLISHABLE_KEY" ]]; then
+  export DEVTAB_SUPABASE_PUBLISHABLE_KEY
+  export DEVTAB_SUPABASE_URL="${DEVTAB_SUPABASE_URL:-$local_supabase_url}"
+else
+  echo "The local stack is not running (script/auth-up): sign-in is off." >&2
+  unset DEVTAB_SUPABASE_PUBLISHABLE_KEY
+fi
+
+exec node dist/server/entry.mjs

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# Migrations only go forward: a file in supabase/migrations/ that the base
+# already has is applied (or will be at the next release), so it is never
+# edited, renamed or deleted, and a new file sorts after every file of the
+# base. The Supabase CLI records applied migrations by version only and would
+# not notice an edited one: the database would silently differ from the file.
+#
+#   script/check-migrations [<base>]
+#
+# <base> is the commit the change starts from: in a pull request its target
+# branch (origin/main), on a push to main the commit before the push. Without
+# it: DEVTAB_MIGRATIONS_BASE, else origin/main. The change is everything from
+# the merge base of <base> and HEAD to the working tree, uncommitted files
+# included, so that it fails locally before a commit as it would in CI.
+# Needs the history of <base> (in CI: actions/checkout with fetch-depth: 0).
+
+set -euo pipefail
+
+root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+cd "$root"
+
+dir="supabase/migrations"
+base="${1:-${DEVTAB_MIGRATIONS_BASE:-origin/main}}"
+
+if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+  echo "check-migrations: no commit $base here; fetch it (CI: fetch-depth: 0) or name another base" >&2
+  exit 2
+fi
+fork="$(git merge-base "$base" HEAD)"
+
+status=0
+
+# Edited, deleted, renamed or retyped files the base already has.
+changed="$(git diff --name-status --no-renames --diff-filter=DMT "$fork" -- "$dir/")"
+if [[ -n "$changed" ]]; then
+  echo "check-migrations: applied migrations changed (only new files may be added):" >&2
+  printf '  %s\n' "$changed" >&2
+  status=1
+fi
+
+# The files the change adds, committed or not, and the last file of the base.
+added="$(
+  {
+    git diff --name-only --no-renames --diff-filter=A "$fork" -- "$dir/"
+    git ls-files --others --exclude-standard -- "$dir/"
+  } | sort -u
+)"
+last="$(git ls-tree --name-only "$fork" -- "$dir/" | sed 's#.*/##' | grep -E '\.sql$' | sort | tail -n 1 || true)"
+
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  name="${file##*/}"
+  if [[ ! "$name" =~ ^[0-9]{14}_[a-z0-9_]+\.sql$ ]]; then
+    echo "check-migrations: $file: name it <14-digit timestamp>_<snake_case name>.sql (supabase migration new <name>)" >&2
+    status=1
+  elif [[ -n "$last" && ! "$name" > "$last" ]]; then
+    echo "check-migrations: $file sorts before $last, the base's last migration: give it a later timestamp" >&2
+    status=1
+  fi
+done <<<"$added"
+
+if [[ $status -eq 0 ]]; then
+  count="$(grep -c . <<<"$added" || true)"
+  echo "check-migrations: no applied migration changed; $count new since $(git rev-parse --short "$fork") ($base)"
+fi
+exit "$status"

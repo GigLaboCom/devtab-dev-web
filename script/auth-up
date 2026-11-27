@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# Starts the local Supabase stack for sign-in: Postgres, Auth, the API gateway
+# (http://127.0.0.1:54332) and the mail catcher, Mailpit
+# (http://127.0.0.1:54334), where every sign-in mail lands; nothing leaves
+# the machine. No other service of the stack (Studio, the Data API, Realtime,
+# Storage, ...). Then gives the API role its local password, as script/db-up
+# does. The first start pulls the images of the gateway and the mail catcher.
+#
+#   script/auth-up
+#
+# The CLI publishes these ports on every interface of the machine: stop the
+# stack when done (`supabase --workdir <repository> stop`). Auth signs access
+# tokens with this machine's ES256 key in the ignored .state/supabase/, made
+# on first use. The stack's publishable key is read from `supabase status`
+# when needed (script/site-server) and never written into a file.
+
+set -euo pipefail
+
+# shellcheck source=lib/supabase.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/supabase.sh"
+
+supabase_cli start -x studio,postgrest,realtime,storage-api,imgproxy,edge-runtime,logflare,vector,supavisor,postgres-meta
+set_api_password
+
+echo "Sign-in is up:"
+echo "  Supabase (DEVTAB_SUPABASE_URL): $local_supabase_url"
+echo "  mail catcher:                   $(local_status_value MAILPIT_URL)"
+echo "  then: script/api-dev, pnpm build, script/site-server"

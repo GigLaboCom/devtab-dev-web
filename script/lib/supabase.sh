@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 #
-# Shared by script/db-*, script/api-dev and script/api-check (sourced, not
-# run): the Supabase CLI for this repository's local stack, and the local
-# database's connection strings. Every CLI call here is local; nothing talks
-# to a hosted project.
+# Shared by script/db-*, script/auth-up, script/api-dev, script/api-check and
+# script/site-server (sourced, not run): the Supabase CLI for this
+# repository's local stack, Auth's signing key, the stack's addresses, and the
+# local database's connection strings. Every CLI call here is local; nothing
+# talks to a hosted project.
 
 # Usage data off. CLI 2.54 collects none; later releases read these two.
 export SUPABASE_TELEMETRY_DISABLED=1
@@ -13,12 +14,36 @@ root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 # The API role's password for the local database, generated on this machine.
 api_password_file="$root/.state/devtab_api.password"
 
+# Supabase Auth's signing key for access tokens (ES256), which
+# supabase/config.toml names: made on first use, mode 600, in the ignored
+# .state/, never committed. The CLI refuses to run without the file.
+signing_keys_file="$root/.state/supabase/signing-keys.json"
+
+ensure_signing_keys() {
+  if [[ -s "$signing_keys_file" && "$(tr -d '[:space:]' <"$signing_keys_file")" != "[]" ]]; then
+    return
+  fi
+  (umask 077 && mkdir -p "$(dirname "$signing_keys_file")" && printf '[]\n' >"$signing_keys_file")
+  supabase --workdir "$root" gen signing-key --algorithm ES256 --append >/dev/null
+}
+
 supabase_cli() {
   if ! command -v supabase >/dev/null 2>&1; then
     echo "The Supabase CLI is not installed (README.md, \"Backend\")." >&2
     exit 1
   fi
+  ensure_signing_keys
   supabase --workdir "$root" "$@"
+}
+
+# The local stack's API gateway (supabase/config.toml, [api] port): Auth is
+# under /auth/v1, its JWKS at /auth/v1/.well-known/jwks.json.
+local_supabase_url="http://127.0.0.1:54332"
+
+# One value of `supabase status -o env` (PUBLISHABLE_KEY, MAILPIT_URL, ...),
+# read when needed and never written into a file.
+local_status_value() {
+  supabase_cli status -o env 2>/dev/null | sed -n "s/^$1=\"\(.*\)\"$/\1/p"
 }
 
 # The owner's URL of the running local database, as the CLI reports it.
