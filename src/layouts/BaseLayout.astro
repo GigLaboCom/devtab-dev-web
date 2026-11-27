@@ -4,17 +4,23 @@ import LanguageSwitch from '../components/LanguageSwitch.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import { defaultLocale, locales, messages, type Locale } from '../i18n';
 import { pages, type PageId } from '../lib/pages';
+import { serverPages, type ServerPageId } from '../lib/serverPages';
 import '../styles/global.css';
 
 interface Props {
   locale: Locale;
-  /** The page of `src/lib/pages.ts`; none for the 404, which is not indexed and has no alternates. */
-  page?: PageId;
+  /**
+   * The page of `src/lib/pages.ts` or `src/lib/serverPages.ts`; none for the
+   * 404, which is not indexed and has no alternates.
+   */
+  page?: PageId | ServerPageId;
 }
 
 const { locale, page } = Astro.props;
 const t = messages(locale);
-const path = page === undefined ? undefined : pages[page];
+const server = page !== undefined && page in serverPages ? serverPages[page as ServerPageId] : undefined;
+const path = page === undefined ? undefined : (server?.path ?? pages[page as PageId]);
+const noindex = path === undefined || server?.index === false;
 const { title, description } = page === undefined ? t.notFound : t.pages[page];
 const fullTitle = title === t.site.name ? title : `${title} · ${t.site.name}`;
 ---
@@ -27,7 +33,7 @@ const fullTitle = title === t.site.name ? title : `${title} · ${t.site.name}`;
     <title>{fullTitle}</title>
     <meta name="description" content={description} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    {path === undefined && <meta name="robots" content="noindex" />}
+    {noindex && <meta name="robots" content="noindex" />}
     {path !== undefined && (
       <>
         <link rel="canonical" href={getAbsoluteLocaleUrl(locale, path)} />

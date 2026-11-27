@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /internal/me`: who the access token says is signed in. Never cached. */
+        get: operations["me"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/plans": {
         parameters: {
             query?: never;
@@ -59,6 +76,16 @@ export interface components {
          * @enum {string}
          */
         Locale: "en" | "ru";
+        /** @description The signed-in person, as the API knows them. */
+        Me: {
+            /** @description The account's e-mail address, from Supabase Auth. */
+            email: string | null;
+            /**
+             * Format: uuid
+             * @description The person's id: the access token's `sub`.
+             */
+            user: string;
+        };
         /** @description A plan as its card shows it. */
         Plan: {
             /** @description At most 24 characters. */
@@ -163,6 +190,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+        };
+    };
+    me: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The signed-in person */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The account is blocked */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The project's signing keys or the database cannot be reached, or sign-in is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

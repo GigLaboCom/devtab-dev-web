@@ -27,3 +27,18 @@ export function localeStaticPaths() {
     props: { locale },
   }));
 }
+
+/**
+ * The locale of a page the server renders, from its `[...locale]` parameter:
+ * none is the default locale, a prefix is its locale; anything else (the
+ * default's own code included, which is never a prefix) is no page: null.
+ */
+export function localeOfParam(param: string | undefined): Locale | null {
+  if (param === undefined) return defaultLocale;
+  return locales.find(locale => locale === param && locale !== defaultLocale) ?? null;
+}
+
+/** A catalogue string with its `{placeholders}` filled in. */
+export function fill(text: string, values: Record<string, string>): string {
+  return text.replace(/\{(\w+)\}/g, (whole, name: string) => values[name] ?? whole);
+}

@@ -1,18 +1,26 @@
 /**
- * `/sitemap.xml`: every page of `src/lib/pages.ts` in every locale, each
- * with its alternates in all locales and `x-default` (the default locale).
- * The tests check it against the pages the build actually wrote.
+ * `/sitemap.xml`: every page of `src/lib/pages.ts` and every indexed page of
+ * `src/lib/serverPages.ts` in every locale, each with its alternates in all
+ * locales and `x-default` (the default locale). The tests check it against
+ * the pages the build actually wrote and the server's pages.
  */
 import type { APIRoute } from 'astro';
 import { getAbsoluteLocaleUrl } from 'astro:i18n';
 import { defaultLocale, locales } from '../i18n';
 import { pages } from '../lib/pages';
+import { serverPages } from '../lib/serverPages';
 
 const escapeXml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export const GET: APIRoute = () => {
-  const entries = Object.values(pages).flatMap(path => {
+  const paths = [
+    ...Object.values(pages),
+    ...Object.values(serverPages)
+      .filter(page => page.index)
+      .map(page => page.path),
+  ];
+  const entries = paths.flatMap(path => {
     const alternates = [
       ...locales.map(locale => [locale, getAbsoluteLocaleUrl(locale, path)]),
       ['x-default', getAbsoluteLocaleUrl(defaultLocale, path)],

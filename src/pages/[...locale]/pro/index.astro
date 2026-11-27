@@ -1,0 +1,87 @@
+---
+/**
+ * /pro/: the plans' cards, from the same catalogue as the extension's
+ * `GET /v1/plans` (the API's `GET /internal/plans`, in this page's language;
+ * a plan without texts in it shows its English ones). Rendered by the server
+ * on each request and kept by caches for five minutes; nothing on it depends
+ * on who asks. A paid plan that cannot be bought now says "soon" instead of
+ * its button.
+ */
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { fill, localeOfParam, messages } from '../../../i18n';
+import { plans } from '../../../lib/api/client';
+import { formatPrice } from '../../../lib/price';
+
+export const prerender = false;
+
+const locale = localeOfParam(Astro.params.locale);
+// No page here: the server answers with the site's 404 page.
+if (!locale) return new Response(null, { status: 404 });
+const t = messages(locale).pages.pro;
+
+const catalogue = await plans(locale);
+if (catalogue) {
+  Astro.response.headers.set('Cache-Control', 'public, max-age=300');
+} else {
+  Astro.response.status = 503;
+  Astro.response.headers.set('Cache-Control', 'no-store');
+}
+const cards = catalogue?.plans ?? [];
+const open = cards.some(plan => plan.kind === 'paid' && plan.available);
+const checkoutHref = (id: string) => `/pro/checkout/?${new URLSearchParams({ plan: id })}`;
+---
+
+<BaseLayout locale={locale} page="pro">
+  <h1 class="text-4xl font-semibold tracking-tight">{t.heading}</h1>
+  {catalogue === null && <p class="mt-4 text-lg">{t.unavailable}</p>}
+  {catalogue !== null && cards.length === 0 && <p class="mt-4 text-lg">{t.empty}</p>}
+  {cards.length > 0 && !open && <p class="mt-4 text-lg">{t.notOpen}</p>}
+  {cards.length > 0 && (
+    <ul role="list" aria-label={t.listLabel} class="mt-8 grid gap-4 sm:grid-cols-3">
+      {cards.map(plan => (
+        <li>
+          <article
+            aria-labelledby={`plan-${plan.id}-name`}
+            lang={plan.locale === locale ? undefined : plan.locale}
+            class="flex h-full flex-col rounded-md border border-border p-5">
+            <h2 id={`plan-${plan.id}-name`} class="text-lg font-semibold">
+              {plan.name}
+              {plan.badge && <span class="sr-only">, </span>}
+              {plan.badge && <span class="ml-2 text-sm font-normal text-muted-foreground">{plan.badge}</span>}
+            </h2>
+            {plan.price && (
+              <p class="mt-2">
+                <span class="text-2xl font-semibold">{formatPrice(plan.price, locale)}</span>{' '}
+                <span class="text-muted-foreground">{plan.term === 'year' ? t.perYear : t.perMonth}</span>
+              </p>
+            )}
+            {plan.summary && <p class="mt-2">{plan.summary}</p>}
+            {plan.priceNote && <p class="mt-1 text-sm text-muted-foreground">{plan.priceNote}</p>}
+            {plan.includes.length > 0 && (
+              <ul class="mt-4 list-disc pl-5 text-sm">
+                {plan.includes.map(line => (
+                  <li>{line}</li>
+                ))}
+              </ul>
+            )}
+            {plan.kind === 'paid' && (
+              <p class="mt-auto pt-6">
+                {plan.available ? (
+                  <a
+                    href={checkoutHref(plan.id)}
+                    class="inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+                    {fill(t.choose, { name: plan.name })}
+                  </a>
+                ) : (
+                  <span class="inline-flex rounded-md border border-border px-4 py-2 text-sm text-muted-foreground">
+                    {t.soon}
+                  </span>
+                )}
+              </p>
+            )}
+          </article>
+        </li>
+      ))}
+    </ul>
+  )}
+</BaseLayout>
