@@ -588,7 +588,10 @@ as they are; `GET /internal/plans` gives its `min_members`. The checkout takes
 `members` (at least `min_members`, up to 1000) and lets the buyer change the
 number on Stripe's page; later the owner changes it in Stripe's portal. The
 licence keeps the number (`members`) and gets the plan's seats for each
-member, and every subscription event brings both in line.
+member, and every subscription event brings both in line. A team plan's price
+may be volume-tiered at Stripe (every member pays the step the whole team
+reaches): `plans sync` keeps the steps, `GET /internal/plans` gives them as
+`tiers`, and a tiered price on a personal plan is refused.
 
 The buyer owns the team and is its first member. On
 `/internal/licences/{lid}/members` they list, invite (`POST {"email"}`, up to
