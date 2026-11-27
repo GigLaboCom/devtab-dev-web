@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use axum::Router;
 use clap::{Parser, Subcommand};
-use devtab_api::admin::{self, AdminCommand, KeysCommand};
+use devtab_api::admin::{self, AdminCommand, KeysCommand, StripeCommand};
 use devtab_api::clock::SystemClock;
 use devtab_api::config::Env;
 use devtab_api::licence::signer::{self, KeyList, Signer};
@@ -89,6 +89,12 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::Admin {
+            command: AdminCommand::Stripe(StripeCommand::Check { file }),
+        } => run(async move {
+            let config = Config::from_env()?;
+            admin::stripe_check(&config, &file, &mut std::io::stdout().lock()).await
+        }),
         Command::Admin { command } => run(admin_db(command)),
     }
 }
@@ -151,8 +157,30 @@ async fn admin_db(command: AdminCommand) -> anyhow::Result<()> {
         std::io::stdin().lock().read_line(&mut answer).is_ok()
             && matches!(answer.trim(), "y" | "Y" | "yes")
     };
-    admin::execute(&command, &mut tx, &mut ctx, &mut confirm).await?;
+    let providers = admin::providers(&config)?;
+    let providers: Vec<&dyn devtab_api::payments::PaymentProvider> =
+        providers.iter().map(AsRef::as_ref).collect();
+    admin::execute(&command, &mut tx, &mut ctx, &mut confirm, &providers).await?;
     tx.commit().await.context("committing")?;
+    Ok(())
+}
+
+/// Stripe's secrets, checked before `serve` starts: the restricted key of the
+/// configured mode and the webhook destination's secret.
+fn check_stripe(settings: &devtab_api::payments::stripe::StripeSettings) -> anyhow::Result<()> {
+    use devtab_api::payments::stripe::{StripeProvider, keys::WebhookSecret};
+    StripeProvider::connect(settings.clone())?;
+    let path = settings.webhook_secret_file.as_ref().context(
+        "DEVTAB_PAYMENTS_WEBHOOK_SECRET_FILE is required for `serve` with DEVTAB_PAYMENTS=stripe",
+    )?;
+    WebhookSecret::read(path)?;
+    tracing::info!(
+        mode = %settings.mode,
+        managed_payments = settings.managed_payments,
+        checkout_ui = ?settings.checkout_ui,
+        api_version = %settings.api_version,
+        "payments: Stripe"
+    );
     Ok(())
 }
 
@@ -205,6 +233,9 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
     telemetry::init(&config);
 
     let signer = signing_key(&config, emergency_key)?;
+    if let Some(stripe) = &config.stripe {
+        check_stripe(stripe)?;
+    }
     if !config.env.is_dev() && config.payments.as_deref() == Some(devtab_api::payments::fake::ID) {
         tracing::warn!(
             "DEVTAB_PAYMENTS=fake outside dev: its prices use the test currency, which is served only \

@@ -16,9 +16,11 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::clock::{parse_rfc3339, rfc3339};
-use crate::config::Env;
+use crate::config::{Config, Env};
 use crate::licence::key;
 use crate::licence::signer::{self, KeyList, Signer};
+use crate::payments::PaymentProvider;
+use crate::payments::stripe::{self, CheckoutUi, StripeProvider, keys::WebhookSecret};
 use crate::plans::catalogue::CatalogueSettings;
 use crate::plans::{file as plans_file, sync as plans_sync};
 use crate::store::licences::{LicenceRow, NewLicence};
@@ -41,6 +43,20 @@ pub enum AdminCommand {
     /// Signing keys: make a key pair, check the server's key.
     #[command(subcommand)]
     Keys(KeysCommand),
+    /// Stripe: check the settings, the secrets and the plans' prices.
+    #[command(subcommand)]
+    Stripe(StripeCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StripeCommand {
+    /// Check the Stripe settings and both secret files as `serve` does, then
+    /// find every Stripe price of the plans file at Stripe (by id or lookup
+    /// key) and check its billing against its plan. Changes nothing.
+    Check {
+        #[arg(long, default_value = "config/plans.toml")]
+        file: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -162,12 +178,14 @@ pub fn actor() -> String {
 }
 
 /// Runs a command that uses the database, in the caller's transaction.
-/// `confirm` is asked before `plans sync` changes anything.
+/// `confirm` is asked before `plans sync` changes anything; `providers` are
+/// the real providers whose prices it may read.
 pub async fn execute(
     command: &AdminCommand,
     conn: &mut PgConnection,
     ctx: &mut Context<'_>,
     confirm: &mut dyn FnMut() -> bool,
+    providers: &[&dyn PaymentProvider],
 ) -> anyhow::Result<()> {
     match command {
         AdminCommand::Licence(command) => licence(command, conn, ctx).await,
@@ -183,11 +201,9 @@ pub async fn execute(
         AdminCommand::Plans(PlansCommand::Sync { file, yes }) => {
             let wanted = plans_file::read(file)?;
             let mut ask = || *yes || confirm();
-            // No real provider's adapter exists yet: only the fake provider's
-            // prices, which the file states, can be read.
             plans_sync::sync(
                 &wanted,
-                &[],
+                providers,
                 &CatalogueSettings::default(),
                 conn,
                 ctx,
@@ -195,7 +211,9 @@ pub async fn execute(
             )
             .await
         }
-        AdminCommand::Keys(_) => bail!("the keys commands do not use the database"),
+        AdminCommand::Keys(_) | AdminCommand::Stripe(_) => {
+            bail!("the keys and stripe commands do not use the database")
+        }
     }
 }
 
@@ -622,6 +640,91 @@ pub fn keys_check(
         out,
         "signing key `{kid}` matches the trusted keys and may sign now"
     )?;
+    Ok(())
+}
+
+/// The real providers the configuration names, for `plans sync`: Stripe's
+/// with its key read from its file.
+pub fn providers(config: &Config) -> anyhow::Result<Vec<Box<dyn PaymentProvider>>> {
+    let mut providers: Vec<Box<dyn PaymentProvider>> = Vec::new();
+    if let Some(settings) = &config.stripe {
+        providers.push(Box::new(StripeProvider::connect(settings.clone())?));
+    }
+    Ok(providers)
+}
+
+/// `admin stripe check`: the settings, the secrets, and every Stripe price
+/// of `file` found at Stripe.
+pub async fn stripe_check(config: &Config, file: &Path, out: &mut dyn Write) -> anyhow::Result<()> {
+    let Some(settings) = &config.stripe else {
+        bail!("DEVTAB_PAYMENTS is not `stripe`: nothing to check");
+    };
+    writeln!(out, "mode:             {}", settings.mode)?;
+    writeln!(
+        out,
+        "seller:           {}",
+        if settings.managed_payments {
+            "Stripe (Managed Payments)"
+        } else if settings.automatic_tax {
+            "the account (Stripe Tax on)"
+        } else {
+            "the account (no Stripe Tax)"
+        }
+    )?;
+    writeln!(
+        out,
+        "checkout:         {}",
+        match settings.checkout_ui {
+            CheckoutUi::Hosted => "hosted page",
+            CheckoutUi::Embedded => "embedded form",
+        }
+    )?;
+    writeln!(
+        out,
+        "api:              {} ({})",
+        settings.api_url, settings.api_version
+    )?;
+    let stripe = StripeProvider::connect(settings.clone())?;
+    writeln!(
+        out,
+        "api key:          {} (restricted, {})",
+        settings.api_key_file.display(),
+        settings.mode
+    )?;
+    match &settings.webhook_secret_file {
+        Some(path) => {
+            WebhookSecret::read(path)?;
+            writeln!(out, "webhook secret:   {}", path.display())?;
+        }
+        None => writeln!(
+            out,
+            "webhook secret:   not set: `serve` refuses to start without \
+             DEVTAB_PAYMENTS_WEBHOOK_SECRET_FILE"
+        )?,
+    }
+    let wanted = plans_file::read(file)?;
+    let named = wanted
+        .plans
+        .iter()
+        .flat_map(|entry| &entry.prices)
+        .filter(|price| price.provider == stripe::ID)
+        .count();
+    if named == 0 {
+        writeln!(
+            out,
+            "prices:           {} names no Stripe price",
+            file.display()
+        )?;
+        return Ok(());
+    }
+    let prices = plans_sync::resolve_prices(&wanted, &[&stripe]).await?;
+    for price in prices.iter().filter(|p| p.provider == stripe::ID) {
+        writeln!(
+            out,
+            "price:            {} → {} {} {}",
+            price.plan_id, price.provider_price_id, price.amount_minor, price.currency
+        )?;
+    }
     Ok(())
 }
 

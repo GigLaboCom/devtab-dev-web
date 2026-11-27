@@ -10,6 +10,7 @@
 //! that answers over HTTP, with its own price ids, fits behind it unchanged.
 
 pub mod fake;
+pub mod stripe;
 
 use std::fmt;
 use std::future::Future;
@@ -113,4 +114,4 @@ pub trait PaymentProvider: Send + Sync + fmt::Debug {
 }
 
 /// The providers this server knows by name, as `DEVTAB_PAYMENTS` takes them.
-pub const KNOWN: [&str; 1] = [fake::ID];
+pub const KNOWN: [&str; 2] = [fake::ID, stripe::ID];

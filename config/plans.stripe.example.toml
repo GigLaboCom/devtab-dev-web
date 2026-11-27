@@ -1,0 +1,56 @@
+# The paid plans of config/plans.toml with Stripe prices instead of the fake
+# provider's: the shape of a deployment's plans file. Copy it next to the
+# deployment, write the final texts, and run
+# `devtab-api admin stripe check --file <it>`, then
+# `devtab-api admin plans sync --file <it>`.
+#
+# A Stripe price is named by its lookup key, which the operator gives the
+# price at Stripe; the same key in the sandbox and in live mode, so that one
+# file serves both. The sync finds the active price with that key and stores
+# its id, amount and currency; its interval must be the plan's. A new price:
+# create it at Stripe with the same lookup key (transferring the key from the
+# old one), then sync again. A price can be named by its id instead
+# (`provider_price_id = "price_…"`), which differs between sandbox and live.
+
+[[plan]]
+id = "free"
+kind = "free"
+sort = 1
+available = true
+[plan.texts.en]
+name = "Free"
+summary = "Every tool, in full, offline."
+includes = ["All 44 tools", "Nothing you paste leaves this browser"]
+
+[[plan]]
+id = "pro-monthly"
+kind = "subscription"
+interval = "month"
+seats = 3
+sort = 2
+available = true
+[plan.texts.en]
+name = "Monthly"
+summary = "Pro, billed every month."
+includes = ["Tool history and its archive", "Tools remember your options", "Copy automatically after generating"]
+price_note = "Tax calculated at checkout."
+[[plan.prices]]
+provider = "stripe"
+lookup_key = "devtab-pro-monthly"
+
+[[plan]]
+id = "pro-annual"
+kind = "subscription"
+interval = "year"
+seats = 3
+sort = 3
+available = true
+[plan.texts.en]
+name = "Annually"
+summary = "Pro, billed once a year."
+includes = ["Everything in Monthly"]
+price_note = "Tax calculated at checkout."
+badge = "Save with a year"
+[[plan.prices]]
+provider = "stripe"
+lookup_key = "devtab-pro-annual"

@@ -38,7 +38,7 @@ async fn run_with(tx: &mut PgConnection, args: &[&str], confirm: bool) -> anyhow
         now: now(),
         out: &mut out,
     };
-    admin::execute(&parse(args), tx, &mut ctx, &mut || confirm).await?;
+    admin::execute(&parse(args), tx, &mut ctx, &mut || confirm, &[]).await?;
     Ok(String::from_utf8(out).unwrap())
 }
 

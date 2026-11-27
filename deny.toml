@@ -11,9 +11,10 @@ unmaintained = "workspace"
 ignore = [
   # url 2.5.8: a stack overflow in Url::origin() on nested blob: URLs. The fix,
   # url 2.5.9, was published on 2026-11-20 and is younger than the two weeks
-  # every dependency must have. Only sqlx depends on url, and the one URL it
-  # parses is the database URL from the environment. From 2026-12-04:
-  # `cargo update -p url --precise 2.5.9`, then delete this entry.
+  # every dependency must have. sqlx and reqwest depend on url; the URLs they
+  # parse are the database URL and the Stripe API address from the
+  # environment, plus paths the code builds, never a URL from a request. From
+  # 2026-12-04: `cargo update -p url --precise 2.5.9`, then delete this entry.
   { id = "RUSTSEC-2026-0592", reason = "the fix is younger than two weeks; no URL from outside is parsed" },
 ]
 

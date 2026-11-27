@@ -452,6 +452,41 @@ amount_minor = 1111
     }
 
     #[test]
+    fn the_stripe_example_names_its_prices_by_lookup_key() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/plans.stripe.example.toml");
+        let file = read(&path).unwrap();
+        let keys: Vec<(&str, &PriceKey)> = file
+            .plans
+            .iter()
+            .flat_map(|p| {
+                p.prices
+                    .iter()
+                    .map(|price| (p.plan.id.as_str(), &price.key))
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                (
+                    "pro-monthly",
+                    &PriceKey::LookupKey("devtab-pro-monthly".to_owned())
+                ),
+                (
+                    "pro-annual",
+                    &PriceKey::LookupKey("devtab-pro-annual".to_owned())
+                ),
+            ]
+        );
+        assert!(
+            file.plans
+                .iter()
+                .flat_map(|p| &p.prices)
+                .all(|p| p.provider == "stripe")
+        );
+    }
+
+    #[test]
     fn a_plan_with_texts_and_a_fake_price() {
         let file = parse(MONTHLY).unwrap();
         let entry = &file.plans[0];

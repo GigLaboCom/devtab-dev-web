@@ -448,6 +448,7 @@ dependencies = [
  "clap",
  "getrandom 0.4.3",
  "governor",
+ "hmac",
  "http-body-util",
  "jsonwebtoken",
  "p256",

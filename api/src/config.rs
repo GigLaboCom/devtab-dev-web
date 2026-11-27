@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 use crate::licence::LicenceSettings;
 use crate::licence::token::Spans;
 use crate::payments;
+use crate::payments::stripe::{self, CheckoutUi, StripeMode, StripeSettings};
 use crate::plans::catalogue::CatalogueSettings;
 
 /// Deployment environment.
@@ -98,6 +99,8 @@ pub struct Config {
     /// The payment provider whose prices the plans' endpoints serve
     /// (`fake` in development); none: no paid plan is offered.
     pub payments: Option<String>,
+    /// Stripe's settings, when `DEVTAB_PAYMENTS=stripe`.
+    pub stripe: Option<StripeSettings>,
     /// `maxAge` of `GET /v1/plans`, seconds.
     pub plans_max_age_s: u32,
     /// The Supabase project's address (`https://<project>.supabase.co`;
@@ -137,6 +140,7 @@ impl fmt::Debug for Config {
             .field("rate_limits", &self.rate_limits)
             .field("site_url", &self.site_url)
             .field("payments", &self.payments)
+            .field("stripe", &self.stripe)
             .field("plans_max_age_s", &self.plans_max_age_s)
             .field("supabase_url", &self.supabase_url)
             .field("jwt_issuer", &self.jwt_issuer)
@@ -179,6 +183,7 @@ impl Default for Config {
             rate_limits: RateLimits::default(),
             site_url: DEV_SITE_URL.to_owned(),
             payments: Some(payments::fake::ID.to_owned()),
+            stripe: None,
             plans_max_age_s: 86_400,
             supabase_url: None,
             jwt_issuer: None,
@@ -229,6 +234,222 @@ fn supabase_url(text: &str, env: Env) -> Option<String> {
     let port_ok = port.is_none_or(|p| p.parse::<u16>().is_ok_and(|p| p > 0));
     (scheme_ok && port_ok && is_host_name(host) && host.len() <= 200)
         .then(|| format!("{scheme}://{}", rest.to_ascii_lowercase()))
+}
+
+/// `true` or `false`; `default` when unset.
+fn flag(
+    get: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    default: bool,
+    problems: &mut Vec<String>,
+) -> bool {
+    match get(key).as_deref() {
+        None => default,
+        Some("true") => true,
+        Some("false") => false,
+        Some(other) => {
+            problems.push(format!("{key} must be `true` or `false`, got `{other}`"));
+            default
+        }
+    }
+}
+
+/// A whole number from `min` to `max`; `default` when unset.
+fn whole(
+    get: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    (default, min, max): (u32, u32, u32),
+    problems: &mut Vec<String>,
+) -> u32 {
+    match get(key) {
+        None => default,
+        Some(text) => match text.parse::<u32>() {
+            Ok(n) if (min..=max).contains(&n) => n,
+            _ => {
+                problems.push(format!(
+                    "{key} must be a whole number from {min} to {max}, got `{text}`"
+                ));
+                default
+            }
+        },
+    }
+}
+
+/// Stripe's API address: `https://<host>[:port]`, no path; plain `http` only
+/// to a stand-in on the loopback address, and only in dev.
+fn stripe_api_url(text: &str, env: Env) -> Option<String> {
+    let text = text.strip_suffix('/').unwrap_or(text);
+    let (scheme, rest) = text.split_once("://")?;
+    let host = rest.rsplit_once(':').map_or(rest, |(host, port)| {
+        if port.parse::<u16>().is_ok() {
+            host
+        } else {
+            rest
+        }
+    });
+    let loopback = matches!(host, "127.0.0.1" | "localhost" | "[::1]");
+    let ok = match scheme {
+        "https" => is_host_name(host),
+        "http" => env.is_dev() && loopback,
+        _ => false,
+    };
+    ok.then(|| text.to_owned())
+}
+
+/// Stripe's settings (`DEVTAB_PAYMENTS=stripe`); the secrets stay in their
+/// files, which `serve` and the commands read and check.
+fn read_stripe(
+    env: Env,
+    get: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> Option<StripeSettings> {
+    let before = problems.len();
+    let mode = read_stripe_mode(env, get, problems);
+    let api_key_file = get("DEVTAB_PAYMENTS_API_KEY_FILE").map(PathBuf::from);
+    if api_key_file.is_none() {
+        problems.push(
+            "DEVTAB_PAYMENTS_API_KEY_FILE is required with DEVTAB_PAYMENTS=stripe: the file of a \
+             restricted key (rk_…)"
+                .to_owned(),
+        );
+    }
+    let webhook_secret_file = get("DEVTAB_PAYMENTS_WEBHOOK_SECRET_FILE").map(PathBuf::from);
+    let managed_payments = flag(get, "DEVTAB_STRIPE_MANAGED_PAYMENTS", true, problems);
+    let automatic_tax = flag(get, "DEVTAB_STRIPE_AUTOMATIC_TAX", false, problems);
+    if managed_payments && automatic_tax {
+        problems.push(
+            "DEVTAB_STRIPE_AUTOMATIC_TAX=true needs DEVTAB_STRIPE_MANAGED_PAYMENTS=false: with \
+             Managed Payments Stripe handles the tax itself"
+                .to_owned(),
+        );
+    }
+    let checkout_ui = match get("DEVTAB_STRIPE_CHECKOUT_UI") {
+        None => CheckoutUi::Hosted,
+        Some(text) => CheckoutUi::parse(&text).unwrap_or_else(|| {
+            problems.push(format!(
+                "DEVTAB_STRIPE_CHECKOUT_UI must be `hosted` or `embedded`, got `{text}`"
+            ));
+            CheckoutUi::Hosted
+        }),
+    };
+    let publishable_key = get("DEVTAB_STRIPE_PUBLISHABLE_KEY");
+    check_publishable_key(publishable_key.as_deref(), mode, checkout_ui, problems);
+    let (api_url, api_version) = read_stripe_api(env, get, problems);
+    let timeout_s = whole(get, "DEVTAB_STRIPE_TIMEOUT", (8, 1, 60), problems);
+    let webhook_tolerance_s = whole(
+        get,
+        "DEVTAB_STRIPE_WEBHOOK_TOLERANCE",
+        (300, 60, 600),
+        problems,
+    );
+    match (mode, api_key_file) {
+        (Some(mode), Some(api_key_file)) if problems.len() == before => Some(StripeSettings {
+            mode,
+            api_key_file,
+            webhook_secret_file,
+            managed_payments,
+            automatic_tax,
+            checkout_ui,
+            publishable_key,
+            api_url,
+            api_version,
+            timeout_s,
+            webhook_tolerance_s,
+        }),
+        _ => None,
+    }
+}
+
+/// `DEVTAB_PAYMENTS_ENV`: required, and never a sandbox in prod.
+fn read_stripe_mode(
+    env: Env,
+    get: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> Option<StripeMode> {
+    let Some(text) = get("DEVTAB_PAYMENTS_ENV") else {
+        problems.push("DEVTAB_PAYMENTS_ENV is required with DEVTAB_PAYMENTS=stripe".to_owned());
+        return None;
+    };
+    match StripeMode::parse(&text) {
+        Some(StripeMode::Sandbox) if env == Env::Prod => {
+            problems.push(
+                "DEVTAB_PAYMENTS_ENV=sandbox is refused in prod: prod takes real payments"
+                    .to_owned(),
+            );
+            None
+        }
+        Some(mode) => Some(mode),
+        None => {
+            problems.push(format!(
+                "DEVTAB_PAYMENTS_ENV must be `sandbox` or `live`, got `{text}`"
+            ));
+            None
+        }
+    }
+}
+
+/// The publishable key: required by the embedded form, and of the mode.
+fn check_publishable_key(
+    key: Option<&str>,
+    mode: Option<StripeMode>,
+    checkout_ui: CheckoutUi,
+    problems: &mut Vec<String>,
+) {
+    match (key, mode) {
+        (None, _) if checkout_ui == CheckoutUi::Embedded => problems.push(
+            "DEVTAB_STRIPE_PUBLISHABLE_KEY is required with DEVTAB_STRIPE_CHECKOUT_UI=embedded"
+                .to_owned(),
+        ),
+        (Some(key), Some(mode)) => {
+            let prefix = if mode.is_live() {
+                "pk_live_"
+            } else {
+                "pk_test_"
+            };
+            let valid = key.strip_prefix(prefix).is_some_and(|rest| {
+                !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            });
+            if !valid {
+                problems.push(format!(
+                    "DEVTAB_STRIPE_PUBLISHABLE_KEY must be a publishable key of the {mode} mode, \
+                     {prefix}…"
+                ));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `DEVTAB_STRIPE_API_URL` and `DEVTAB_STRIPE_API_VERSION`, or their defaults.
+fn read_stripe_api(
+    env: Env,
+    get: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> (String, String) {
+    let api_url = match get("DEVTAB_STRIPE_API_URL") {
+        None => stripe::DEFAULT_API_URL.to_owned(),
+        Some(text) => stripe_api_url(&text, env).unwrap_or_else(|| {
+            problems.push(format!(
+                "DEVTAB_STRIPE_API_URL must be https://<host>[:port] (http only to the loopback \
+                 address in dev), got `{text}`"
+            ));
+            String::new()
+        }),
+    };
+    let api_version = match get("DEVTAB_STRIPE_API_VERSION") {
+        None => stripe::DEFAULT_API_VERSION.to_owned(),
+        Some(text) if stripe::is_supported_api_version(&text) => text,
+        Some(text) => {
+            problems.push(format!(
+                "DEVTAB_STRIPE_API_VERSION must be a Stripe API version such as {} and not older \
+                 than {}, got `{text}`",
+                stripe::DEFAULT_API_VERSION,
+                stripe::OLDEST_API_VERSION
+            ));
+            String::new()
+        }
+    };
+    (api_url, api_version)
 }
 
 impl Config {
@@ -369,6 +590,10 @@ impl Config {
                  currency"
                     .to_owned(),
             );
+        }
+
+        if config.payments.as_deref() == Some(stripe::ID) {
+            config.stripe = read_stripe(config.env, get, problems);
         }
 
         if let Some(text) = get("DEVTAB_PLANS_MAX_AGE") {
@@ -820,6 +1045,129 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err.0.len(), 1, "{err}");
+    }
+
+    fn stripe_env<'a>(extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+        let mut pairs = vec![
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_PAYMENTS", "stripe"),
+            ("DEVTAB_PAYMENTS_ENV", "sandbox"),
+            (
+                "DEVTAB_PAYMENTS_API_KEY_FILE",
+                "/run/secrets/payments-api-key",
+            ),
+        ];
+        pairs.extend_from_slice(extra);
+        pairs
+    }
+
+    #[test]
+    fn stripe_s_settings_default_to_managed_payments_and_the_hosted_page() {
+        let config = load(&stripe_env(&[])).unwrap();
+        let stripe = config.stripe.unwrap();
+        assert_eq!(stripe.mode, StripeMode::Sandbox);
+        assert_eq!(
+            stripe.api_key_file,
+            PathBuf::from("/run/secrets/payments-api-key")
+        );
+        assert_eq!(stripe.webhook_secret_file, None);
+        assert!(stripe.managed_payments);
+        assert!(!stripe.automatic_tax);
+        assert_eq!(stripe.checkout_ui, CheckoutUi::Hosted);
+        assert_eq!(stripe.publishable_key, None);
+        assert_eq!(stripe.api_url, "https://api.stripe.com");
+        assert_eq!(stripe.api_version, stripe::DEFAULT_API_VERSION);
+        assert_eq!((stripe.timeout_s, stripe.webhook_tolerance_s), (8, 300));
+        let fake = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert_eq!(fake.stripe, None, "no Stripe settings without the provider");
+    }
+
+    #[test]
+    fn reads_stripe_s_settings() {
+        let config = load(&stripe_env(&[
+            (
+                "DEVTAB_PAYMENTS_WEBHOOK_SECRET_FILE",
+                "/run/secrets/payments-webhook-secret",
+            ),
+            ("DEVTAB_STRIPE_MANAGED_PAYMENTS", "false"),
+            ("DEVTAB_STRIPE_AUTOMATIC_TAX", "true"),
+            ("DEVTAB_STRIPE_CHECKOUT_UI", "embedded"),
+            ("DEVTAB_STRIPE_PUBLISHABLE_KEY", "pk_test_abc"),
+            ("DEVTAB_STRIPE_API_URL", "http://127.0.0.1:12111/"),
+            ("DEVTAB_STRIPE_API_VERSION", "2026-09-30.endive"),
+            ("DEVTAB_STRIPE_TIMEOUT", "3"),
+            ("DEVTAB_STRIPE_WEBHOOK_TOLERANCE", "120"),
+        ]))
+        .unwrap();
+        let stripe = config.stripe.unwrap();
+        assert_eq!(
+            stripe.webhook_secret_file,
+            Some(PathBuf::from("/run/secrets/payments-webhook-secret"))
+        );
+        assert!(!stripe.managed_payments);
+        assert!(stripe.automatic_tax);
+        assert_eq!(stripe.checkout_ui, CheckoutUi::Embedded);
+        assert_eq!(stripe.publishable_key.as_deref(), Some("pk_test_abc"));
+        assert_eq!(stripe.api_url, "http://127.0.0.1:12111");
+        assert_eq!(stripe.api_version, "2026-09-30.endive");
+        assert_eq!((stripe.timeout_s, stripe.webhook_tolerance_s), (3, 120));
+    }
+
+    #[test]
+    fn reports_every_stripe_problem_at_once() {
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_PAYMENTS", "stripe"),
+            ("DEVTAB_PAYMENTS_ENV", "test"),
+            ("DEVTAB_STRIPE_MANAGED_PAYMENTS", "yes"),
+            ("DEVTAB_STRIPE_AUTOMATIC_TAX", "true"),
+            ("DEVTAB_STRIPE_CHECKOUT_UI", "embedded"),
+            ("DEVTAB_STRIPE_API_URL", "http://api.example.invalid"),
+            ("DEVTAB_STRIPE_API_VERSION", "2025-03-31.basil"),
+            ("DEVTAB_STRIPE_TIMEOUT", "0"),
+            ("DEVTAB_STRIPE_WEBHOOK_TOLERANCE", "1"),
+        ])
+        .unwrap_err();
+        // env, key file, managed flag, tax with managed payments, the
+        // publishable key, the address, the version, two numbers.
+        assert_eq!(err.0.len(), 9, "{err}");
+    }
+
+    #[test]
+    fn keys_of_the_other_mode_and_sandboxes_in_prod_are_refused() {
+        let err = load(&stripe_env(&[(
+            "DEVTAB_STRIPE_PUBLISHABLE_KEY",
+            "pk_live_abc",
+        )]))
+        .unwrap_err();
+        assert!(err.0[0].contains("pk_test_"), "{err}");
+        let err = load(&[
+            ("DEVTAB_ENV", "prod"),
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
+            ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+            ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+            ("DEVTAB_SUPABASE_URL", "https://project.example.invalid"),
+            ("DEVTAB_PAYMENTS", "stripe"),
+            ("DEVTAB_PAYMENTS_ENV", "sandbox"),
+            (
+                "DEVTAB_PAYMENTS_API_KEY_FILE",
+                "/run/secrets/payments-api-key",
+            ),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 1, "{err}");
+        assert!(err.0[0].contains("refused in prod"));
+        let staging = load(&stripe_env(&[
+            ("DEVTAB_ENV", "staging"),
+            ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
+            ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+            ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+            ("DEVTAB_SUPABASE_URL", "https://project.example.invalid"),
+            ("DEVTAB_STRIPE_API_URL", "http://127.0.0.1:12111"),
+        ]))
+        .unwrap_err();
+        assert!(staging.0[0].contains("DEVTAB_STRIPE_API_URL"), "{staging}");
     }
 
     #[test]
