@@ -1,7 +1,8 @@
 /**
  * The script in every page's <head> (BaseLayout.astro): it sets the
- * visitor's theme on <html> before the first paint and wires the header's
- * switch (ThemeSwitch.astro). The site's content security policy allows it
+ * visitor's theme on <html> before the first paint, wires the header's
+ * switch (ThemeSwitch.astro), and closes an open menu (the language menu, a
+ * <details>) on a press outside it or Escape. The site's content security policy allows it
  * by its hash, which astro.config.mjs computes from this same text, so the
  * two cannot drift apart.
  */
@@ -20,6 +21,15 @@ export const themeScript = `(() => {
     else root.setAttribute('data-theme', theme);
   };
   apply();
+  const closeMenus = (except) => {
+    for (const menu of document.querySelectorAll('details[open]')) {
+      if (!except || !menu.contains(except)) menu.open = false;
+    }
+  };
+  document.addEventListener('click', (event) => closeMenus(event.target));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMenus(null);
+  });
   addEventListener('DOMContentLoaded', () => {
     const button = document.getElementById('theme-switch');
     if (!button) return;

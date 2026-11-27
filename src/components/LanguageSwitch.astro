@@ -1,4 +1,11 @@
 ---
+/**
+ * The language menu in the header: the current language with its flag; a
+ * press opens the list of the others (a native <details>, so it works without
+ * script). Each entry is a link to the same page in that language, marked
+ * `aria-current` for the current one. The flags are drawn here (an emoji flag
+ * shows as two letters on Windows) and are decoration: the names say it all.
+ */
 import { getRelativeLocaleUrl } from 'astro:i18n';
 import { locales, messages, type Locale } from '../i18n';
 
@@ -9,21 +16,56 @@ interface Props {
 }
 
 const { locale, path = '' } = Astro.props;
+
+/** A flag for each language: the country its site speaks to, 20 × 14. */
+const flags: Record<Locale, string> = {
+  en: `<rect width="20" height="14" fill="#012169"/><path d="M0 0l20 14M20 0L0 14" stroke="#fff" stroke-width="2.8"/><path d="M0 0l20 14M20 0L0 14" stroke="#C8102E" stroke-width="1.2"/><path d="M10 0v14M0 7h20" stroke="#fff" stroke-width="4.6"/><path d="M10 0v14M0 7h20" stroke="#C8102E" stroke-width="2.6"/>`,
+  ru: `<rect width="20" height="14" fill="#fff"/><rect y="4.67" width="20" height="4.67" fill="#0039A6"/><rect y="9.33" width="20" height="4.67" fill="#D52B1E"/>`,
+};
+const flag = (of: Locale) =>
+  `<svg viewBox="0 0 20 14" width="20" height="14" aria-hidden="true" class="shrink-0 rounded-[2px] ring-1 ring-border">${flags[of]}</svg>`;
 ---
 
 <nav aria-label={messages(locale).site.languageSwitch}>
-  <ul class="flex gap-1 text-sm">
-    {locales.map(other => (
-      <li>
-        <a
-          href={getRelativeLocaleUrl(other, path)}
-          hreflang={other}
-          lang={other}
-          aria-current={other === locale ? 'page' : undefined}
-          class="block rounded-md px-2 py-1 text-muted-foreground hover:text-foreground aria-[current=page]:bg-muted aria-[current=page]:text-foreground">
-          {messages(other).language.name}
-        </a>
-      </li>
-    ))}
-  </ul>
+  <details class="group relative">
+    <summary class="flex cursor-pointer list-none items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground select-none hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden">
+      <Fragment set:html={flag(locale)} />
+      <span>{messages(locale).language.name}</span>
+      <svg
+        viewBox="0 0 24 24"
+        class="size-3.5 transition-transform group-open:rotate-180"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true">
+        <path d="M6 9l6 6 6-6"></path>
+      </svg>
+    </summary>
+    <ul class="absolute right-0 z-10 mt-1 min-w-40 rounded-md border border-border bg-card p-1 text-sm shadow-lg">
+      {locales.map(other => (
+        <li>
+          <a
+            href={getRelativeLocaleUrl(other, path)}
+            hreflang={other}
+            lang={other}
+            aria-current={other === locale ? 'page' : undefined}
+            class="flex items-center gap-2 rounded-[calc(var(--radius)-0.375rem)] px-2 py-1.5 text-foreground hover:bg-muted aria-[current=page]:font-medium">
+            <Fragment set:html={flag(other)} />
+            <span class="flex-1">{messages(other).language.name}</span>
+            {other === locale && (
+              <svg
+                viewBox="0 0 24 24"
+                class="size-4 text-accent"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true">
+                <path d="M5 12.5l4.5 4.5L19 7.5"></path>
+              </svg>
+            )}
+          </a>
+        </li>
+      ))}
+    </ul>
+  </details>
 </nav>
