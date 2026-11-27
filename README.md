@@ -372,7 +372,7 @@ and the signed token the server returns.
 The plans' catalogue is data: `config/plans.toml` holds the plans (id, kind,
 billing period, seats, order, whether available, the end of a limited offer),
 the texts of each plan's card (English required, Russian optional) and each
-plan's prices as a provider and its price id. `devtab-api admin plans sync`
+plan's prices as a provider and its price id or lookup key. `devtab-api admin plans sync`
 makes `app.plans`, `app.plan_texts` and `app.plan_prices` what the file says
 for the plans it lists, and writes the catalogue's version (`<date>.<n>`) into
 `app.settings`:
@@ -383,12 +383,12 @@ for the plans it lists, and writes the catalogue's version (`<date>.<n>`) into
   1–100 each, price note 60, badge 24), no control or text-direction
   characters, at most six available plans (counting those not in the file),
   English texts for every plan, and an answer within 32 KB.
-- Amounts are never typed in: the sync reads each price's amount and currency
-  from its provider by the price id (`PaymentProvider::price`,
-  `api/src/payments/`) and stores them. The only provider so far is `fake`,
-  for development and tests, whose prices the file states next to their ids.
-  A real provider's adapter, answering over HTTP with its own price ids, comes
-  with the purchase; the endpoints only read the stored rows.
+- Amounts are never typed in: the sync reads each price's id, amount and
+  currency from its provider (`PaymentProvider::resolve`, `api/src/payments/`)
+  and stores them; a recurring price must bill as often as its plan. `fake`,
+  for development and tests, has its prices stated in the file next to their
+  ids; Stripe's are named by lookup key (or id) and read from Stripe
+  ("Payments (Stripe)" below). The endpoints only read the stored rows.
 - A real price uses a currency code of ISO 4217 that browsers know
   (`api/src/plans/currency.rs`); XTS, the code ISO 4217 reserves for tests,
   belongs to the fake provider alone and is served only in `dev`, as only the
@@ -454,6 +454,68 @@ No header, or a token that does not pass: 401 `unauthorized` with
 only) these routes answer 503. So far one route needs a person:
 `GET /internal/me`, `{"user": "<uuid>", "email": "<the account's address>"}`,
 never cached; the account pages of a later stage add to it.
+
+### Payments (Stripe)
+
+The payment provider is chosen when deploying: `DEVTAB_PAYMENTS=stripe` with
+the settings under "Configuration" (`deploy/api.env.example` lists them all).
+Nothing about an account is in the code: no key, price, product, webhook
+address or host of anyone. What differs between deployments is a setting, and
+each secret is a file the setting names.
+
+- **Mode.** `DEVTAB_PAYMENTS_ENV` is `sandbox` or `live` (prod: live only);
+  the key must be of that mode, and a webhook event of the other mode is
+  refused.
+- **Seller.** With Managed Payments (`DEVTAB_STRIPE_MANAGED_PAYMENTS=true`,
+  the default) Stripe sells as merchant of record and handles the tax; the
+  checkout passes `managed_payments[enabled]` and nothing about tax. With
+  `false` the account sells, and `DEVTAB_STRIPE_AUTOMATIC_TAX=true` turns on
+  Stripe Tax for the checkout.
+- **Checkout.** A subscription Checkout Session for one price of the stored
+  catalogue, tied to our checkout by `client_reference_id` and metadata on the
+  session and its subscription, with an idempotency key. `hosted` (the
+  default) sends the buyer to Stripe's page; `embedded` answers the session's
+  client secret, the publishable key (`DEVTAB_STRIPE_PUBLISHABLE_KEY`) and the
+  API version for Stripe.js, so the site needs no Stripe setting of its own.
+  The purchase pages will have to widen the content security policy for
+  Stripe: `form-action` for its checkout and portal hosts when a form posts
+  there, and Stripe.js and its frames for the embedded form.
+- **Webhooks.** The signature check is in place
+  (`api/src/payments/stripe/webhook.rs`: `t` and every `v1`, HMAC-SHA256 with
+  the destination's secret over the raw body, the tolerance, the mode); the
+  endpoint that receives them comes with the purchase.
+- **API.** REST over rustls with the Mozilla roots built in, the version
+  pinned by `DEVTAB_STRIPE_API_VERSION` (default `2026-11-18.endive`, nothing
+  older than `2026-09-30.endive`), retries on 409, 429 and 5xx as Stripe
+  advises, at most 1 MB read per answer.
+
+What the operator creates at Stripe, once per mode (the sandbox, then live):
+
+1. For Managed Payments: the application in the Dashboard (Settings › Managed
+   Payments) and the product's eligible tax code.
+2. A product with two recurring prices, monthly and yearly, each with a lookup
+   key; the plans file names those keys (`config/plans.stripe.example.toml`).
+3. The customer portal's default configuration: switching between the two
+   prices, cancelling at the period's end, updating the payment method,
+   invoice history.
+4. A webhook destination at `<DEVTAB_SITE_URL>/api/webhooks/stripe` with
+   snapshot events of the API version above: `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, `customer.subscription.created`,
+   `.updated`, `.deleted`, `.paused`, `.resumed`, `invoice.paid`,
+   `invoice.payment_failed`, `invoice.payment_action_required`,
+   `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed`. Its
+   signing secret goes into the file `DEVTAB_PAYMENTS_WEBHOOK_SECRET_FILE`
+   names.
+5. A restricted key with write on Checkout Sessions, Customer portal,
+   Subscriptions and Subscription schedules, and read on Prices, Invoices,
+   Invoice payments, Charges, Disputes and Events; nothing else. It goes into
+   the file `DEVTAB_PAYMENTS_API_KEY_FILE` names.
+
+Then `devtab-api admin stripe check --file <plans file>` checks the settings
+and both secrets as `serve` does and finds every Stripe price of the file;
+`admin plans sync --file <plans file>` stores them. `serve` does not start
+with a missing secret, a secret key, or a key of the other mode.
 
 ### The internal API's types
 
@@ -622,6 +684,7 @@ transaction; keys are printed once and never stored.
 | `plans sync [--file config/plans.toml] [--yes]`                                | Makes the catalogue the file's: plans, texts, prices read from the provider; prints the changes, asks first            |
 | `keys generate --kid <p1, p2, …> --out <file>`, `keys generate --test --out …` | An ES256 key pair: the private key into a new file, the public entry printed (`--list-out <file>`: also as a key list) |
 | `keys check`                                                                   | The server's key against the trusted keys, as `serve` checks it                                                        |
+| `stripe check [--file config/plans.toml]`                                      | Stripe's settings and secrets as `serve` checks them; every Stripe price of the file found at Stripe; changes nothing  |
 
 `devtab-api openapi` prints the internal listener's OpenAPI document (what
 `script/gen` writes); it needs neither the database nor any setting.
@@ -660,37 +723,48 @@ customers, the job queue and the admin record; the plans' texts and prices and
 
 ### Configuration
 
-| Variable                                  | Default                                              | Note                                                          |
-| ----------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
-| `DEVTAB_ENV`                              | `dev`                                                | `dev`, `staging` or `prod`                                    |
-| `DEVTAB_PUBLIC_ADDR`                      | `0.0.0.0:8080`                                       |                                                               |
-| `DEVTAB_INTERNAL_ADDR`                    | `127.0.0.1:8081` in `dev`, `0.0.0.0:8081` otherwise  |                                                               |
-| `DEVTAB_DATABASE_URL`                     | none: required (`script/api-dev` sets the local one) | `postgres://` or `postgresql://`                              |
-| `DEVTAB_DB_MAX_CONNECTIONS`               | `10`                                                 | greater than 0                                                |
-| `DEVTAB_LOG`                              | `info`                                               | `tracing` directives                                          |
-| `DEVTAB_SIGNING_KEY_FILE`                 | none: `serve` needs it (`script/api-dev`: test key)  | the private key, PKCS#8 PEM                                   |
-| `DEVTAB_SIGNING_KID`                      | none: `serve` needs it (`script/api-dev`: test key)  | its id among the trusted keys                                 |
-| `DEVTAB_DEV_SIGNING_KEYS_FILE`            | none (`script/api-dev`: `.state/signing/`)           | `dev` only: a developer's test public keys; refused otherwise |
-| `DEVTAB_LICENCE_HOST`                     | none: any host in `dev`; required otherwise          | `/v1/*` answers 404 on any other `Host`                       |
-| `DEVTAB_EXTENSION_ORIGINS`                | none in `dev`; required otherwise                    | `chrome-extension://<id>`, comma-separated: CORS of `/v1/*`   |
-| `DEVTAB_MAINTENANCE_UNTIL`                | none                                                 | RFC 3339; until then `/v1/*` answers 503 with `Retry-After`   |
-| `DEVTAB_TOKEN_CHECK_DAYS`                 | `7`                                                  | `chk`                                                         |
-| `DEVTAB_TOKEN_WINDOW_DAYS`                | `30`                                                 | `exp`                                                         |
-| `DEVTAB_TOKEN_WARN_DAYS`                  | `7`                                                  | `warn` before `exp`                                           |
-| `DEVTAB_TOKEN_DUNNING_DAYS`               | `14`                                                 | a subscription's grace after its paid period                  |
-| `DEVTAB_RELEASE_AFTER_DAYS`               | `60`                                                 | an installation not seen for this long loses its seat         |
-| `DEVTAB_ACTIVATION_CHURN`                 | `3`                                                  | new activations in 30 days, per seat                          |
-| `DEVTAB_RATE_ACTIVATE_PER_IP`             | `30`                                                 | requests an hour, by client address                           |
-| `DEVTAB_RATE_ACTIVATE_PER_KEY`            | `10`                                                 | requests an hour, by key                                      |
-| `DEVTAB_RATE_REFRESH_PER_IP`              | `60`                                                 | requests an hour, by client address                           |
-| `DEVTAB_RATE_REFRESH_PER_INSTALLATION`    | `6`                                                  | requests an hour, by licence and installation                 |
-| `DEVTAB_RATE_DEACTIVATE_PER_INSTALLATION` | `10`                                                 | requests an hour, by licence and installation                 |
-| `DEVTAB_RATE_PLANS_PER_IP`                | `60`                                                 | `GET /v1/plans`: requests a minute, by client address         |
-| `DEVTAB_SITE_URL`                         | `https://web.example.invalid` in `dev`               | required outside `dev`: `https://<host>`, checkout, manage    |
-| `DEVTAB_PAYMENTS`                         | `fake` in `dev`; none otherwise                      | provider whose prices are served; `fake` refused in `prod`    |
-| `DEVTAB_PLANS_MAX_AGE`                    | `86400`                                              | `maxAge` of `GET /v1/plans`, 3600 to 604800 seconds           |
-| `DEVTAB_SUPABASE_URL`                     | none in `dev`; required otherwise                    | the project (`script/api-dev`: http://127.0.0.1:54332): JWKS  |
-| `DEVTAB_JWT_ISSUER`                       | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | the access tokens' `iss`                                      |
+| Variable                                  | Default                                              | Note                                                                  |
+| ----------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------- |
+| `DEVTAB_ENV`                              | `dev`                                                | `dev`, `staging` or `prod`                                            |
+| `DEVTAB_PUBLIC_ADDR`                      | `0.0.0.0:8080`                                       |                                                                       |
+| `DEVTAB_INTERNAL_ADDR`                    | `127.0.0.1:8081` in `dev`, `0.0.0.0:8081` otherwise  |                                                                       |
+| `DEVTAB_DATABASE_URL`                     | none: required (`script/api-dev` sets the local one) | `postgres://` or `postgresql://`                                      |
+| `DEVTAB_DB_MAX_CONNECTIONS`               | `10`                                                 | greater than 0                                                        |
+| `DEVTAB_LOG`                              | `info`                                               | `tracing` directives                                                  |
+| `DEVTAB_SIGNING_KEY_FILE`                 | none: `serve` needs it (`script/api-dev`: test key)  | the private key, PKCS#8 PEM                                           |
+| `DEVTAB_SIGNING_KID`                      | none: `serve` needs it (`script/api-dev`: test key)  | its id among the trusted keys                                         |
+| `DEVTAB_DEV_SIGNING_KEYS_FILE`            | none (`script/api-dev`: `.state/signing/`)           | `dev` only: a developer's test public keys; refused otherwise         |
+| `DEVTAB_LICENCE_HOST`                     | none: any host in `dev`; required otherwise          | `/v1/*` answers 404 on any other `Host`                               |
+| `DEVTAB_EXTENSION_ORIGINS`                | none in `dev`; required otherwise                    | `chrome-extension://<id>`, comma-separated: CORS of `/v1/*`           |
+| `DEVTAB_MAINTENANCE_UNTIL`                | none                                                 | RFC 3339; until then `/v1/*` answers 503 with `Retry-After`           |
+| `DEVTAB_TOKEN_CHECK_DAYS`                 | `7`                                                  | `chk`                                                                 |
+| `DEVTAB_TOKEN_WINDOW_DAYS`                | `30`                                                 | `exp`                                                                 |
+| `DEVTAB_TOKEN_WARN_DAYS`                  | `7`                                                  | `warn` before `exp`                                                   |
+| `DEVTAB_TOKEN_DUNNING_DAYS`               | `14`                                                 | a subscription's grace after its paid period                          |
+| `DEVTAB_RELEASE_AFTER_DAYS`               | `60`                                                 | an installation not seen for this long loses its seat                 |
+| `DEVTAB_ACTIVATION_CHURN`                 | `3`                                                  | new activations in 30 days, per seat                                  |
+| `DEVTAB_RATE_ACTIVATE_PER_IP`             | `30`                                                 | requests an hour, by client address                                   |
+| `DEVTAB_RATE_ACTIVATE_PER_KEY`            | `10`                                                 | requests an hour, by key                                              |
+| `DEVTAB_RATE_REFRESH_PER_IP`              | `60`                                                 | requests an hour, by client address                                   |
+| `DEVTAB_RATE_REFRESH_PER_INSTALLATION`    | `6`                                                  | requests an hour, by licence and installation                         |
+| `DEVTAB_RATE_DEACTIVATE_PER_INSTALLATION` | `10`                                                 | requests an hour, by licence and installation                         |
+| `DEVTAB_RATE_PLANS_PER_IP`                | `60`                                                 | `GET /v1/plans`: requests a minute, by client address                 |
+| `DEVTAB_SITE_URL`                         | `https://web.example.invalid` in `dev`               | required outside `dev`: `https://<host>`, checkout, manage            |
+| `DEVTAB_PAYMENTS`                         | `fake` in `dev`; none otherwise                      | `fake` or `stripe`: whose prices are served; `fake` refused in `prod` |
+| `DEVTAB_PAYMENTS_ENV`                     | none: required with `stripe`                         | `sandbox` or `live`; `prod` takes `live` only                         |
+| `DEVTAB_PAYMENTS_API_KEY_FILE`            | none: required with `stripe`                         | the file of a restricted key of that mode, `rk_test_…`/`rk_live_…`    |
+| `DEVTAB_PAYMENTS_WEBHOOK_SECRET_FILE`     | none: `serve` needs it with `stripe`                 | the file of the webhook destination's secret, `whsec_…`               |
+| `DEVTAB_STRIPE_MANAGED_PAYMENTS`          | `true`                                               | Stripe sells as merchant of record                                    |
+| `DEVTAB_STRIPE_AUTOMATIC_TAX`             | `false`                                              | Stripe Tax; only with Managed Payments off                            |
+| `DEVTAB_STRIPE_CHECKOUT_UI`               | `hosted`                                             | `hosted` (Stripe's page) or `embedded` (Stripe's form on the site)    |
+| `DEVTAB_STRIPE_PUBLISHABLE_KEY`           | none: required with `embedded`                       | `pk_test_…`/`pk_live_…` of the mode; public                           |
+| `DEVTAB_STRIPE_API_VERSION`               | `2026-11-18.endive`                                  | not older than `2026-09-30.endive`; the webhook destination's too     |
+| `DEVTAB_STRIPE_API_URL`                   | `https://api.stripe.com`                             | `https://<host>[:port]`; `http` to the loopback address in `dev` only |
+| `DEVTAB_STRIPE_TIMEOUT`                   | `8`                                                  | seconds per attempt of a request, 1 to 60                             |
+| `DEVTAB_STRIPE_WEBHOOK_TOLERANCE`         | `300`                                                | seconds a webhook's signature stays valid, 60 to 600                  |
+| `DEVTAB_PLANS_MAX_AGE`                    | `86400`                                              | `maxAge` of `GET /v1/plans`, 3600 to 604800 seconds                   |
+| `DEVTAB_SUPABASE_URL`                     | none in `dev`; required otherwise                    | the project (`script/api-dev`: http://127.0.0.1:54332): JWKS          |
+| `DEVTAB_JWT_ISSUER`                       | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | the access tokens' `iss`                                              |
 
 Logs are compact lines in `dev` and JSON lines in `staging` and `prod`. They
 carry a licence id and the first four characters of an installation id;
@@ -712,14 +786,17 @@ api/src/http/             routers, middleware, the error shape, /v1/*, the plans
 api/src/licence/          keys, secrets, the token and its signing, activation, refresh, seats
 api/src/plans/            the plans file, its sync, currencies, the catalogue the endpoints answer
 api/src/auth/             signed-in people: access tokens against the JWKS, the CurrentUser extractor
-api/src/payments/         the payment provider's interface and the fake provider
+api/src/payments/         the payment provider's interface, the fake provider and Stripe (settings' secrets, REST
+                          client, prices, checkout, portal, webhook signatures)
 api/src/store/            the Postgres pool and the queries, a module for each of the tables
 api/src/jobs/             the scheduler and its task under an advisory lock
 api/src/admin.rs          the admin commands
 api/tests/                HTTP, database, /v1/*, plans, sign-in, admin, scheduler, start-up and contract tests;
                           fixtures/plans/ (a test catalogue)
 .sqlx/                    the queries' offline data (script/sqlx-prepare)
-config/                   signing-keys.json (published public keys), plans.toml (the plans' catalogue)
+config/                   signing-keys.json (published public keys), plans.toml (the plans' catalogue),
+                          plans.stripe.example.toml (the shape of a deployment's plans file with Stripe prices)
+deploy/                   api.env.example and web.env.example: every setting, the defaults commented out
 contract/licence-v1/      the licence contract: schemas, errors, vectors, the copied verifier, its test
 contract/plans-v1/        the plans contract: the answer's schema, server catalogues, the copied reader, its test
 contract/internal-openapi.json  the internal listener's OpenAPI document (script/gen)
