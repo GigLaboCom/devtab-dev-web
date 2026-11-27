@@ -1,6 +1,6 @@
 //! `config/plans.toml`: the plans, their cards' texts in each language and
-//! their prices by the provider's price id. Every problem of the file is
-//! reported at once; an unknown field is a problem.
+//! their prices by the provider's price id or lookup key. Every problem of
+//! the file is reported at once; an unknown field is a problem.
 //!
 //! ```toml
 //! [[plan]]
@@ -22,6 +22,11 @@
 //! provider_price_id = "pri_TEST_0001"
 //! currency = "XTS"            # the fake provider's only: a real provider
 //! amount_minor = 1111         # states both for its price id
+//! [[plan.prices]]
+//! provider = "stripe"
+//! lookup_key = "pro-monthly"  # instead of provider_price_id: the key the
+//!                             # operator gave the price, the same in test
+//!                             # and live mode (not for the fake provider)
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,8 +40,8 @@ use super::{
     is_provider, limits,
 };
 use crate::clock::parse_rfc3339;
-use crate::payments::PriceSnapshot;
 use crate::payments::fake::{self, FakeProvider};
+use crate::payments::{PriceKey, PriceSnapshot};
 use crate::store::plans::{PlanRow, PlanTextRow};
 
 #[derive(Debug, Deserialize)]
@@ -78,17 +83,19 @@ struct TextSpec {
 #[serde(deny_unknown_fields)]
 struct PriceSpec {
     provider: String,
-    provider_price_id: String,
+    provider_price_id: Option<String>,
+    lookup_key: Option<String>,
     currency: Option<String>,
     amount_minor: Option<i64>,
 }
 
-/// A price as the file names it: the provider and its price id, plus the
-/// amount and currency for the fake provider, whose prices the file is.
+/// A price as the file names it: the provider and its price id or lookup
+/// key, plus the amount and currency for the fake provider, whose prices the
+/// file is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PriceRef {
     pub provider: String,
-    pub provider_price_id: String,
+    pub key: PriceKey,
     pub stated: Option<PriceSnapshot>,
 }
 
@@ -114,11 +121,9 @@ impl PlansFile {
                 .iter()
                 .flat_map(|entry| &entry.prices)
                 .filter(|price| price.provider == fake::ID)
-                .filter_map(|price| {
-                    price
-                        .stated
-                        .clone()
-                        .map(|snapshot| (price.provider_price_id.clone(), snapshot))
+                .filter_map(|price| match (&price.key, &price.stated) {
+                    (PriceKey::Id(id), Some(snapshot)) => Some((id.clone(), snapshot.clone())),
+                    _ => None,
                 }),
         )
     }
@@ -167,7 +172,7 @@ pub fn parse(text: &str) -> anyhow::Result<PlansFile> {
 /// One plan's rules; `None` when it breaks one (reported through `say`).
 fn check_plan(
     spec: PlanSpec,
-    price_ids: &mut BTreeSet<(String, String)>,
+    price_ids: &mut BTreeSet<(String, PriceKey)>,
     say: &mut impl FnMut(String),
 ) -> Option<PlanEntry> {
     let before = std::cell::Cell::new(0_usize);
@@ -256,7 +261,7 @@ fn check_plan(
 /// A plan's prices; those that break a rule are reported through `count`.
 fn check_prices(
     specs: Vec<PriceSpec>,
-    price_ids: &mut BTreeSet<(String, String)>,
+    price_ids: &mut BTreeSet<(String, PriceKey)>,
     count: &mut impl FnMut(String),
 ) -> Vec<PriceRef> {
     let mut prices = Vec::new();
@@ -264,10 +269,10 @@ fn check_prices(
     for price in specs {
         match check_price(price) {
             Ok(price) => {
-                if !price_ids.insert((price.provider.clone(), price.provider_price_id.clone())) {
+                if !price_ids.insert((price.provider.clone(), price.key.clone())) {
                     count(format!(
                         "price {} {} appears twice in the file",
-                        price.provider, price.provider_price_id
+                        price.provider, price.key
                     ));
                 }
                 if let Some(stated) = &price.stated
@@ -339,13 +344,33 @@ fn check_price(spec: PriceSpec) -> Result<PriceRef, String> {
     if !is_provider(&provider) {
         return Err(format!("provider `{provider}` breaks [a-z0-9-]{{2,32}}"));
     }
-    let id = spec.provider_price_id;
+    let (id, key) = match (spec.provider_price_id, spec.lookup_key) {
+        (Some(id), None) => (id.clone(), PriceKey::Id(id)),
+        (None, Some(_)) if provider == fake::ID => {
+            return Err(
+                "a fake price is named by provider_price_id: it has no lookup keys".to_owned(),
+            );
+        }
+        (None, Some(key)) => (key.clone(), PriceKey::LookupKey(key)),
+        _ => {
+            return Err(format!(
+                "a price at {provider} has either provider_price_id or lookup_key, not both"
+            ));
+        }
+    };
+    // The database keeps an id of up to 255 characters; Stripe a lookup key
+    // of up to 200.
+    let max = if matches!(key, PriceKey::Id(_)) {
+        255
+    } else {
+        200
+    };
     if id.is_empty()
-        || id.chars().count() > 255
+        || id.chars().count() > max
         || id.chars().any(|c| forbidden(c) || c.is_whitespace())
     {
         return Err(format!(
-            "price id `{id}` at {provider}: 1 to 255 characters, no spaces or control characters"
+            "price `{id}` at {provider}: 1 to {max} characters, no spaces or control characters"
         ));
     }
     let stated = match (provider.as_str(), spec.currency, spec.amount_minor) {
@@ -374,13 +399,13 @@ fn check_price(spec: PriceSpec) -> Result<PriceRef, String> {
         (_, _, _) => {
             return Err(format!(
                 "price {id}: {provider} states its own amount and currency; the file names only \
-                 the price id"
+                 the price id or lookup key"
             ));
         }
     };
     Ok(PriceRef {
         provider,
-        provider_price_id: id,
+        key,
         stated,
     })
 }
@@ -518,5 +543,52 @@ amount_minor = 1111
             parse(unpriced).is_err(),
             "an available paid plan without a price"
         );
+    }
+
+    #[test]
+    fn a_real_price_is_named_by_id_or_lookup_key() {
+        let plan = |prices: &str| {
+            format!(
+                "[[plan]]\nid = \"pro\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 1\n\
+                 sort = 1\n[plan.texts.en]\nname = \"Pro\"\n{prices}"
+            )
+        };
+        let price = |fields: &str| format!("[[plan.prices]]\n{fields}\n");
+        let file = parse(&plan(&price(
+            "provider = \"stripe\"\nlookup_key = \"pro-monthly\"",
+        )))
+        .unwrap();
+        assert_eq!(
+            file.plans[0].prices[0].key,
+            PriceKey::LookupKey("pro-monthly".to_owned())
+        );
+        let by_id = parse(&plan(&price(
+            "provider = \"stripe\"\nprovider_price_id = \"price_1\"",
+        )))
+        .unwrap();
+        assert_eq!(
+            by_id.plans[0].prices[0].key,
+            PriceKey::Id("price_1".to_owned())
+        );
+
+        let both =
+            price("provider = \"stripe\"\nprovider_price_id = \"price_1\"\nlookup_key = \"k\"");
+        let neither = price("provider = \"stripe\"");
+        let fake_key =
+            price("provider = \"fake\"\nlookup_key = \"k\"\ncurrency = \"XTS\"\namount_minor = 1");
+        let long_key = price(&format!(
+            "provider = \"stripe\"\nlookup_key = \"{}\"",
+            "k".repeat(201)
+        ));
+        let twice = price("provider = \"stripe\"\nlookup_key = \"k\"").repeat(2);
+        for (case, prices) in [
+            ("both", both),
+            ("neither", neither),
+            ("a fake price by lookup key", fake_key),
+            ("a lookup key over 200 characters", long_key),
+            ("the same lookup key twice", twice),
+        ] {
+            assert!(parse(&plan(&prices)).is_err(), "{case}");
+        }
     }
 }

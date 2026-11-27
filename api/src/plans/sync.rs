@@ -1,7 +1,8 @@
 //! `devtab-api admin plans sync`: makes the database's catalogue what the
 //! plans file says, for the plans the file lists. It reads every price's
-//! amount and currency from its provider by the price id (the fake
-//! provider's from the file), checks the result as the extension would read
+//! id, amount and currency from its provider by the price id or lookup key
+//! (the fake provider's from the file), checks a recurring price's interval
+//! against its plan's, checks the result as the extension would read
 //! it, prints the changes, asks, and writes them with a new catalogue version
 //! and one `app.admin_audit` row, in the caller's transaction.
 //!
@@ -22,7 +23,7 @@ use super::file::PlansFile;
 use super::{MAX_AMOUNT, MAX_ANSWER_BYTES, MAX_PLANS, currency};
 use crate::admin::Context;
 use crate::clock::rfc3339;
-use crate::payments::{PaymentProvider, fake};
+use crate::payments::{Billing, PaymentProvider, fake};
 use crate::store::audit;
 use crate::store::plans::{self as store, NewPrice, PlanRow, PlanTextRow, PriceRow};
 
@@ -50,28 +51,50 @@ pub async fn resolve_prices(
                 ));
                 continue;
             };
-            let snapshot = match provider.price(&price.provider_price_id).await {
-                Ok(snapshot) => snapshot,
+            let found = match provider.resolve(&price.key).await {
+                Ok(found) => found,
                 Err(err) => {
                     problems.push(format!(
                         "plan `{}`: price {} at {}: {err}",
-                        entry.plan.id, price.provider_price_id, price.provider
+                        entry.plan.id, price.key, price.provider
                     ));
                     continue;
                 }
             };
+            let billed = match &found.billing {
+                Billing::Unknown => None,
+                Billing::OneTime => Some(None),
+                Billing::Every(interval) => Some(Some(interval)),
+            };
+            if let Some(billed) = billed
+                && billed != entry.plan.interval.as_ref()
+            {
+                let every = |interval: Option<&String>| {
+                    interval.map_or("once".to_owned(), |i| format!("every {i}"))
+                };
+                problems.push(format!(
+                    "plan `{}`: price {} at {} bills {}, the plan {}",
+                    entry.plan.id,
+                    price.key,
+                    price.provider,
+                    every(billed),
+                    every(entry.plan.interval.as_ref())
+                ));
+                continue;
+            }
+            let snapshot = found.snapshot;
             if !currency::allowed_at(&price.provider, &snapshot.currency) {
                 problems.push(format!(
                     "plan `{}`: price {} at {} is in `{}`, which is not a real currency code \
                      (the test currency is the fake provider's alone)",
-                    entry.plan.id, price.provider_price_id, price.provider, snapshot.currency
+                    entry.plan.id, price.key, price.provider, snapshot.currency
                 ));
                 continue;
             }
             if !(0..=MAX_AMOUNT).contains(&snapshot.amount_minor) {
                 problems.push(format!(
                     "plan `{}`: price {} at {} is {} minor units, outside 0 to {MAX_AMOUNT}",
-                    entry.plan.id, price.provider_price_id, price.provider, snapshot.amount_minor
+                    entry.plan.id, price.key, price.provider, snapshot.amount_minor
                 ));
                 continue;
             }
@@ -89,7 +112,7 @@ pub async fn resolve_prices(
             prices.push(NewPrice {
                 plan_id: entry.plan.id.clone(),
                 provider: price.provider.clone(),
-                provider_price_id: price.provider_price_id.clone(),
+                provider_price_id: found.id,
                 currency: snapshot.currency,
                 amount_minor: snapshot.amount_minor,
             });
@@ -525,7 +548,7 @@ pub async fn sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::payments::{PriceSnapshot, ProviderError, ProviderFuture};
+    use crate::payments::{FoundPrice, PriceKey, PriceSnapshot, ProviderError, ProviderFuture};
     use crate::plans::file;
 
     fn at(text: &str) -> OffsetDateTime {
@@ -593,6 +616,75 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("fake provider's alone"), "{err}");
+    }
+
+    /// A provider with lookup keys, which says how its prices bill.
+    #[derive(Debug)]
+    struct Keyed;
+
+    impl PaymentProvider for Keyed {
+        fn id(&self) -> &'static str {
+            "keyed"
+        }
+
+        fn price<'a>(&'a self, id: &'a str) -> ProviderFuture<'a, PriceSnapshot> {
+            Box::pin(async move { Err(ProviderError::NotFound(format!("price {id}"))) })
+        }
+
+        fn resolve<'a>(&'a self, key: &'a PriceKey) -> ProviderFuture<'a, FoundPrice> {
+            Box::pin(async move {
+                let billing = match key {
+                    PriceKey::LookupKey(k) if k == "monthly" => Billing::Every("month".to_owned()),
+                    PriceKey::LookupKey(k) if k == "yearly" => Billing::Every("year".to_owned()),
+                    PriceKey::LookupKey(k) if k == "once" => Billing::OneTime,
+                    other => return Err(ProviderError::NotFound(other.to_string())),
+                };
+                Ok(FoundPrice {
+                    id: format!("price_{key}").replace(' ', "_"),
+                    snapshot: PriceSnapshot {
+                        currency: "EUR".to_owned(),
+                        amount_minor: 900,
+                    },
+                    billing,
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lookup_key_stores_the_price_s_id_and_its_billing_must_be_the_plan_s() {
+        let keyed = |key: &str| {
+            file::parse(&format!(
+                "[[plan]]\nid = \"pro\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 1\n\
+                 sort = 1\n[plan.texts.en]\nname = \"Pro\"\n[[plan.prices]]\nprovider = \"keyed\"\n\
+                 lookup_key = \"{key}\"\n"
+            ))
+            .unwrap()
+        };
+        let prices = resolve_prices(&keyed("monthly"), &[&Keyed]).await.unwrap();
+        assert_eq!(prices[0].provider_price_id, "price_lookup_key_monthly");
+        for (key, want) in [
+            ("yearly", "bills every year, the plan every month"),
+            ("once", "bills once"),
+        ] {
+            let err = resolve_prices(&keyed(key), &[&Keyed])
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(want), "{key}: {err}");
+        }
+        let err = resolve_prices(&keyed("monthly"), &[&Remote])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no adapter"), "{err}");
+        let unsupported =
+            file::parse(&PLAN.replace("provider_price_id = \"ID\"", "lookup_key = \"k\"")).unwrap();
+        let err = resolve_prices(&unsupported, &[&Remote])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not support lookup keys"), "{err}");
     }
 
     #[tokio::test]
