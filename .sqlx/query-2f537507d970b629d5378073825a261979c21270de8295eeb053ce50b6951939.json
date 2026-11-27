@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.key_reveals set revealed_at = $2\n         where licence_id = $1 and revealed_at is null and expires_at > $2\n         returning key_plain",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key_plain",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.key_reveals",
+            "name": "key_plain"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2f537507d970b629d5378073825a261979c21270de8295eeb053ce50b6951939"
+}

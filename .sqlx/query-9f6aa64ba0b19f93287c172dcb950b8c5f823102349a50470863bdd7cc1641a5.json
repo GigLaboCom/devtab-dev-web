@@ -1,0 +1,125 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, user_id, plan_id, status, revoke_reason, paid_until, cancel_at_period_end,\n                past_due_since, ended_at\n         from app.licences\n         where provider = $1 and provider_subscription_id = $2\n         for update",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "plan_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "plan_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "revoke_reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "revoke_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "paid_until",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "paid_until"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "cancel_at_period_end",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "cancel_at_period_end"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "past_due_since",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "past_due_since"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "ended_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "ended_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "9f6aa64ba0b19f93287c172dcb950b8c5f823102349a50470863bdd7cc1641a5"
+}

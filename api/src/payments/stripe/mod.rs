@@ -11,6 +11,7 @@
 
 pub mod client;
 pub mod keys;
+pub mod subscriptions;
 pub mod webhook;
 
 use std::fmt;

@@ -165,15 +165,17 @@ async fn admin_db(command: AdminCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Stripe's secrets, checked before `serve` starts: the restricted key of the
-/// configured mode and the webhook destination's secret.
-fn check_stripe(settings: &devtab_api::payments::stripe::StripeSettings) -> anyhow::Result<()> {
+/// Stripe with its secrets, checked before `serve` starts: the restricted
+/// key of the configured mode and the webhook destination's secret.
+fn stripe_payments(
+    settings: &devtab_api::payments::stripe::StripeSettings,
+) -> anyhow::Result<devtab_api::payments::Payments> {
     use devtab_api::payments::stripe::{StripeProvider, keys::WebhookSecret};
-    StripeProvider::connect(settings.clone())?;
+    let stripe = StripeProvider::connect(settings.clone())?;
     let path = settings.webhook_secret_file.as_ref().context(
         "DEVTAB_PAYMENTS_WEBHOOK_SECRET_FILE is required for `serve` with DEVTAB_PAYMENTS=stripe",
     )?;
-    WebhookSecret::read(path)?;
+    let webhook_secret = WebhookSecret::read(path)?;
     tracing::info!(
         mode = %settings.mode,
         managed_payments = settings.managed_payments,
@@ -181,7 +183,10 @@ fn check_stripe(settings: &devtab_api::payments::stripe::StripeSettings) -> anyh
         api_version = %settings.api_version,
         "payments: Stripe"
     );
-    Ok(())
+    Ok(devtab_api::payments::Payments {
+        stripe,
+        webhook_secret,
+    })
 }
 
 /// The signing key from `DEVTAB_SIGNING_KEY_FILE`, checked against the
@@ -233,9 +238,7 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
     telemetry::init(&config);
 
     let signer = signing_key(&config, emergency_key)?;
-    if let Some(stripe) = &config.stripe {
-        check_stripe(stripe)?;
-    }
+    let payments = config.stripe.as_ref().map(stripe_payments).transpose()?;
     if !config.env.is_dev() && config.payments.as_deref() == Some(devtab_api::payments::fake::ID) {
         tracing::warn!(
             "DEVTAB_PAYMENTS=fake outside dev: its prices use the test currency, which is served only \
@@ -264,6 +267,9 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
     }
     let clock = Arc::new(SystemClock);
     let mut state = AppState::new(store, clock.clone(), signer, &config);
+    if let Some(payments) = payments {
+        state = state.with_payments(payments);
+    }
     if let Some(auth) = config.auth() {
         let verifier = devtab_api::auth::Verifier::remote(auth.jwks_url, auth.issuer, clock)
             .context("building the JWKS client")?;
@@ -291,6 +297,7 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
 
     let (stop_tx, stop_rx) = watch::channel(());
     let scheduler = jobs::scheduler::spawn(state.clone(), stop_rx.clone());
+    let worker = jobs::worker::spawn(state.clone(), stop_rx.clone());
     let public_app = devtab_api::public_app(&config, state.clone());
     let internal_app = devtab_api::internal_app(&config, state);
     let mut servers = tokio::spawn(async move {
@@ -320,6 +327,7 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
         tracing::warn!("drain timeout reached, dropping open connections");
     }
     let _ = scheduler.await;
+    let _ = worker.await;
     tracing::info!("api stopped");
     Ok(())
 }

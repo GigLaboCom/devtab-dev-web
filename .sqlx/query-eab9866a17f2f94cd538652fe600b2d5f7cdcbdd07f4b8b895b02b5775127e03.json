@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into app.key_reveals (licence_id, key_plain, created_at, expires_at)\n         values ($1, $2, $3, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eab9866a17f2f94cd538652fe600b2d5f7cdcbdd07f4b8b895b02b5775127e03"
+}

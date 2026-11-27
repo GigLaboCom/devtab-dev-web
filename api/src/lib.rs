@@ -23,7 +23,10 @@ pub use store::Store;
 
 /// The public listener (`DEVTAB_PUBLIC_ADDR`): routes plus middleware.
 pub fn public_app(config: &Config, state: AppState) -> Router {
-    http::with_layers(http::public_routes(config, state))
+    http::with_layers(http::public_routes(config, state.clone())).merge(http::with_layers_limited(
+        http::webhooks::routes(state),
+        http::webhooks::BODY_LIMIT,
+    ))
 }
 
 /// The internal listener (`DEVTAB_INTERNAL_ADDR`), for the site's own pages

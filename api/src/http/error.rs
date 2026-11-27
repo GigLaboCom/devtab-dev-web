@@ -51,6 +51,17 @@ pub enum AppError {
     KeyUnknown,
     #[error("This licence is active in as many browsers as it allows.")]
     SeatLimit,
+    /// A webhook whose signature does not match; nothing about it is logged
+    /// but the provider.
+    #[error("the signature does not match")]
+    Signature,
+    #[error("no such plan")]
+    PlanUnknown,
+    #[error("this plan cannot be bought now")]
+    PlanUnavailable,
+    /// No payment provider is configured, or it could not start a checkout.
+    #[error("payments are unavailable")]
+    PaymentsUnavailable,
     /// Details are logged, never sent to the client.
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -59,14 +70,16 @@ pub enum AppError {
 impl AppError {
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::NotFound | Self::KeyUnknown => StatusCode::NOT_FOUND,
+            Self::BadRequest(_) | Self::Signature => StatusCode::BAD_REQUEST,
+            Self::NotFound | Self::KeyUnknown | Self::PlanUnknown => StatusCode::NOT_FOUND,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
-            Self::Unavailable | Self::UnavailableFor { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable | Self::UnavailableFor { .. } | Self::PaymentsUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::Forbidden(_) | Self::KeyBlocked | Self::LicenceInactive => StatusCode::FORBIDDEN,
-            Self::SeatLimit => StatusCode::CONFLICT,
+            Self::SeatLimit | Self::PlanUnavailable => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -84,6 +97,10 @@ impl AppError {
             Self::LicenceInactive => "licence-inactive",
             Self::KeyUnknown => "key-unknown",
             Self::SeatLimit => "seat-limit",
+            Self::Signature => "signature",
+            Self::PlanUnknown => "plan-unknown",
+            Self::PlanUnavailable => "plan-unavailable",
+            Self::PaymentsUnavailable => "payments-unavailable",
             Self::Internal(_) => "internal",
         }
     }

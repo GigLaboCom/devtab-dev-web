@@ -85,3 +85,21 @@ pub async fn fail(
     .await
     .map(|_| ())
 }
+
+/// A job given up on: done, with the error that stopped it.
+pub async fn give_up(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    error: &str,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "update app.jobs set done_at = $3, attempts = attempts + 1, last_error = $2 where id = $1",
+        id,
+        error,
+        now,
+    )
+    .execute(db)
+    .await
+    .map(|_| ())
+}

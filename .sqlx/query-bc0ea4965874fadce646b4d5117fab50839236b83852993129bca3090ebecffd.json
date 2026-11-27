@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select key_hint from app.licences where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key_hint",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.licences",
+            "name": "key_hint"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bc0ea4965874fadce646b4d5117fab50839236b83852993129bca3090ebecffd"
+}

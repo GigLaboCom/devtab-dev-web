@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.provider_events\n         set status = $2, processed_at = $3, attempts = attempts + 1, last_error = null\n         where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "81027b11cfa62f8eee3bd9ac8492eacfdefcf2d7e244115e2ff3b5503bd9d5e4"
+}

@@ -5,11 +5,14 @@
 //! search path.
 
 pub mod audit;
+pub mod checkouts;
 pub mod customers;
+pub mod events;
 pub mod installations;
 pub mod jobs;
 pub mod licences;
 pub mod plans;
+pub mod reveals;
 pub mod users;
 
 use std::time::Duration;

@@ -185,6 +185,44 @@ pub async fn active_prices(
     .await
 }
 
+/// The price the provider knows by `provider_price_id`, active or not: a
+/// subscription keeps the price it was bought at.
+pub async fn find_price(
+    db: impl PgExecutor<'_>,
+    provider: &str,
+    provider_price_id: &str,
+) -> Result<Option<PriceRow>, sqlx::Error> {
+    sqlx::query_as!(
+        PriceRow,
+        r#"select id, plan_id, provider, provider_price_id, currency::text as "currency!",
+                  amount_minor, active
+           from app.plan_prices where provider = $1 and provider_price_id = $2"#,
+        provider,
+        provider_price_id,
+    )
+    .fetch_optional(db)
+    .await
+}
+
+/// An active price of `plan_id` at `provider`.
+pub async fn active_price_of_plan(
+    db: impl PgExecutor<'_>,
+    plan_id: &str,
+    provider: &str,
+) -> Result<Option<PriceRow>, sqlx::Error> {
+    sqlx::query_as!(
+        PriceRow,
+        r#"select id, plan_id, provider, provider_price_id, currency::text as "currency!",
+                  amount_minor, active
+           from app.plan_prices where plan_id = $1 and provider = $2 and active
+           order by currency limit 1"#,
+        plan_id,
+        provider,
+    )
+    .fetch_optional(db)
+    .await
+}
+
 pub async fn insert_price(db: impl PgExecutor<'_>, price: &NewPrice) -> Result<Uuid, sqlx::Error> {
     sqlx::query_scalar!(
         "insert into app.plan_prices (plan_id, provider, provider_price_id, currency, amount_minor)

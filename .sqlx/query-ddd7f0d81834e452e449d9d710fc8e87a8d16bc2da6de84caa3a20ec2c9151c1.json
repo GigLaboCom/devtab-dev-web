@@ -1,0 +1,96 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, plan_id, provider, provider_price_id, currency::text as \"currency!\",\n                  amount_minor, active\n           from app.plan_prices where provider = $1 and provider_price_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.plan_prices",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "plan_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_prices",
+            "name": "plan_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_prices",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "provider_price_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.plan_prices",
+            "name": "provider_price_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "currency!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "amount_minor",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "app.plan_prices",
+            "name": "amount_minor"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "active",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "app.plan_prices",
+            "name": "active"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "ddd7f0d81834e452e449d9d710fc8e87a8d16bc2da6de84caa3a20ec2c9151c1"
+}

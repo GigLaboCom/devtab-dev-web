@@ -156,7 +156,7 @@ pub enum Locale {
 }
 
 impl Locale {
-    fn code(self) -> &'static str {
+    pub fn code(self) -> &'static str {
         match self {
             Self::En => "en",
             Self::Ru => "ru",

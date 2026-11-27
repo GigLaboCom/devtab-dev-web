@@ -6,6 +6,140 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/internal/checkouts": {
+      "post": {
+        "tags": [
+          "purchase"
+        ],
+        "summary": "`POST /internal/checkouts`: starts a checkout of a plan for the\nsigned-in person.",
+        "operationId": "start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewCheckout"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedCheckout"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`plan-unknown`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`plan-unavailable`: not sold now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`payments-unavailable`: no provider, or it did not start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/internal/checkouts/{id}": {
+      "get": {
+        "tags": [
+          "purchase"
+        ],
+        "summary": "`GET /internal/checkouts/{id}`: how the signed-in person's checkout went.",
+        "operationId": "read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The checkout, the `ref` of the return address",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The checkout's state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such checkout of this person",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/internal/healthz": {
       "get": {
         "tags": [
@@ -141,6 +275,65 @@
   },
   "components": {
     "schemas": {
+      "CheckoutState": {
+        "type": "object",
+        "description": "A checkout as its buyer sees it.",
+        "required": [
+          "status",
+          "key",
+          "key_hint"
+        ],
+        "properties": {
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The licence key: only the first time a completed checkout is asked\nfor, within a day of the licence; null ever after."
+          },
+          "key_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The key's last four characters, once completed."
+          },
+          "status": {
+            "$ref": "#/components/schemas/CheckoutStatus"
+          }
+        }
+      },
+      "CheckoutStatus": {
+        "type": "string",
+        "description": "Where a checkout stands.",
+        "enum": [
+          "open",
+          "completed",
+          "expired"
+        ]
+      },
+      "EmbeddedCheckout": {
+        "type": "object",
+        "description": "Stripe's form for the site's own page.",
+        "required": [
+          "client_secret",
+          "publishable_key",
+          "api_version"
+        ],
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "description": "Stripe.js of this API version mounts the form."
+          },
+          "client_secret": {
+            "type": "string"
+          },
+          "publishable_key": {
+            "type": "string",
+            "description": "Public by design."
+          }
+        }
+      },
       "ErrorBody": {
         "type": "object",
         "description": "The body of every error answer.",
@@ -201,6 +394,24 @@
             "description": "The person's id: the access token's `sub`."
           }
         }
+      },
+      "NewCheckout": {
+        "type": "object",
+        "description": "A checkout to start.",
+        "required": [
+          "plan"
+        ],
+        "properties": {
+          "locale": {
+            "$ref": "#/components/schemas/Locale",
+            "description": "The language of the provider's page, the return page and the mail."
+          },
+          "plan": {
+            "type": "string",
+            "description": "The plan's id, such as `pro-monthly`."
+          }
+        },
+        "additionalProperties": false
       },
       "Plan": {
         "type": "object",
@@ -393,6 +604,37 @@
           }
         ],
         "description": "A plan as the site's pages show it."
+      },
+      "StartedCheckout": {
+        "type": "object",
+        "description": "A started checkout: where to send the buyer, or the form to mount.",
+        "required": [
+          "checkout"
+        ],
+        "properties": {
+          "checkout": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "embedded": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EmbeddedCheckout",
+                "description": "The form (an embedded checkout)."
+              }
+            ]
+          },
+          "redirect_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider's page (a hosted checkout); answer it with 303."
+          }
+        }
       },
       "Term": {
         "type": "string",

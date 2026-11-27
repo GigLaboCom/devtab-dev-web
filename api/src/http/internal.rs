@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::HeaderValue;
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse as _, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
@@ -17,7 +17,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use uuid::Uuid;
 
 use super::error::{AppError, ErrorBody};
-use super::plans;
+use super::{checkouts, plans};
 use crate::auth::CurrentUser;
 use crate::config::Config;
 use crate::plans::catalogue::{Plan, PlanKind, Price, SiteCatalogue, SitePlan, Term};
@@ -98,6 +98,8 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         .route("/internal/healthz", get(healthz))
         .route("/internal/plans", get(plans::internal_plans))
         .route("/internal/me", get(me))
+        .route("/internal/checkouts", post(checkouts::start))
+        .route("/internal/checkouts/{id}", get(checkouts::read))
         .fallback(|| async { AppError::NotFound })
         .with_state(state)
 }
@@ -109,7 +111,7 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         description = "The internal listener of devtab-api, for the site's own pages only. Every \
                        error answers {\"error\": \"<kebab-case code>\", \"message\": \"<English text>\"}."
     ),
-    paths(healthz, plans::internal_plans, me),
+    paths(healthz, plans::internal_plans, me, checkouts::start, checkouts::read),
     modifiers(&BearerScheme),
     components(schemas(
         Health,
@@ -121,7 +123,12 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         PlanKind,
         Term,
         Price,
-        plans::Locale
+        plans::Locale,
+        checkouts::NewCheckout,
+        checkouts::StartedCheckout,
+        checkouts::EmbeddedCheckout,
+        checkouts::CheckoutState,
+        checkouts::CheckoutStatus
     ))
 )]
 struct InternalApi;
@@ -144,7 +151,13 @@ mod tests {
         let paths: Vec<&String> = doc["paths"].as_object().unwrap().keys().collect();
         assert_eq!(
             paths,
-            ["/internal/healthz", "/internal/me", "/internal/plans"]
+            [
+                "/internal/checkouts",
+                "/internal/checkouts/{id}",
+                "/internal/healthz",
+                "/internal/me",
+                "/internal/plans"
+            ]
         );
         assert!(doc["components"]["securitySchemes"]["bearer"].is_object());
         assert!(doc["components"]["schemas"]["SiteCatalogue"].is_object());

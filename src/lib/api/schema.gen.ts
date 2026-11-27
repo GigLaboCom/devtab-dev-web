@@ -4,6 +4,43 @@
  */
 
 export interface paths {
+    "/internal/checkouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /internal/checkouts`: starts a checkout of a plan for the
+         *     signed-in person.
+         */
+        post: operations["start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/checkouts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /internal/checkouts/{id}`: how the signed-in person's checkout went. */
+        get: operations["read"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/healthz": {
         parameters: {
             query?: never;
@@ -59,6 +96,30 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description A checkout as its buyer sees it. */
+        CheckoutState: {
+            /**
+             * @description The licence key: only the first time a completed checkout is asked
+             *     for, within a day of the licence; null ever after.
+             */
+            key: string | null;
+            /** @description The key's last four characters, once completed. */
+            key_hint: string | null;
+            status: components["schemas"]["CheckoutStatus"];
+        };
+        /**
+         * @description Where a checkout stands.
+         * @enum {string}
+         */
+        CheckoutStatus: "open" | "completed" | "expired";
+        /** @description Stripe's form for the site's own page. */
+        EmbeddedCheckout: {
+            /** @description Stripe.js of this API version mounts the form. */
+            api_version: string;
+            client_secret: string;
+            /** @description Public by design. */
+            publishable_key: string;
+        };
         /** @description The body of every error answer. */
         ErrorBody: {
             /** @description A kebab-case code. */
@@ -85,6 +146,13 @@ export interface components {
              * @description The person's id: the access token's `sub`.
              */
             user: string;
+        };
+        /** @description A checkout to start. */
+        NewCheckout: {
+            /** @description The language of the provider's page, the return page and the mail. */
+            locale?: components["schemas"]["Locale"];
+            /** @description The plan's id, such as `pro-monthly`. */
+            plan: string;
         };
         /** @description A plan as its card shows it. */
         Plan: {
@@ -160,6 +228,14 @@ export interface components {
              */
             locale: string;
         };
+        /** @description A started checkout: where to send the buyer, or the form to mount. */
+        StartedCheckout: {
+            /** Format: uuid */
+            checkout: string;
+            embedded?: null | components["schemas"]["EmbeddedCheckout"];
+            /** @description The provider's page (a hosted checkout); answer it with 303. */
+            redirect_url?: string | null;
+        };
         /**
          * @description A subscription's billing period.
          * @enum {string}
@@ -174,6 +250,107 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCheckout"];
+            };
+        };
+        responses: {
+            /** @description Started */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartedCheckout"];
+                };
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `plan-unknown` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `plan-unavailable`: not sold now */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `payments-unavailable`: no provider, or it did not start */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    read: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The checkout, the `ref` of the return address */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The checkout's state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutState"];
+                };
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No such checkout of this person */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     healthz: {
         parameters: {
             query?: never;

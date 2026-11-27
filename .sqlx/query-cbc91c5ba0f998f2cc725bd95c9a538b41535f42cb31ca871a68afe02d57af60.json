@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.checkouts set status = 'completed', licence_id = $2, completed_at = $3\n         where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cbc91c5ba0f998f2cc725bd95c9a538b41535f42cb31ca871a68afe02d57af60"
+}

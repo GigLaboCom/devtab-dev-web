@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.jobs set done_at = $3, attempts = attempts + 1, last_error = $2 where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d8a1c8d53ccd7c0e80b36a73ef30b8c8037bc4531fd685369c10bffbd92ec8df"
+}

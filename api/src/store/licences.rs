@@ -205,3 +205,70 @@ pub async fn replace_key(
     .fetch_one(db)
     .await
 }
+
+/// What a provider's subscription decides about its licence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscriptionLicence {
+    pub id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub plan_id: String,
+    pub status: String,
+    pub revoke_reason: Option<String>,
+    pub paid_until: Option<OffsetDateTime>,
+    pub cancel_at_period_end: bool,
+    pub past_due_since: Option<OffsetDateTime>,
+    pub ended_at: Option<OffsetDateTime>,
+}
+
+/// The licence of the provider's subscription, locked for the rest of the
+/// transaction.
+pub async fn find_by_subscription_for_update(
+    db: impl PgExecutor<'_>,
+    provider: &str,
+    subscription: &str,
+) -> Result<Option<SubscriptionLicence>, sqlx::Error> {
+    sqlx::query_as!(
+        SubscriptionLicence,
+        "select id, user_id, plan_id, status, revoke_reason, paid_until, cancel_at_period_end,
+                past_due_since, ended_at
+         from app.licences
+         where provider = $1 and provider_subscription_id = $2
+         for update",
+        provider,
+        subscription,
+    )
+    .fetch_optional(db)
+    .await
+}
+
+/// Writes what reconciling the subscription decided: status, plan, paid
+/// period, cancellation, overdue mark and end.
+pub async fn apply_subscription(
+    db: impl PgExecutor<'_>,
+    licence: &SubscriptionLicence,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "update app.licences
+         set status = $2, revoke_reason = $3, plan_id = $4, paid_until = $5,
+             cancel_at_period_end = $6, past_due_since = $7, ended_at = $8
+         where id = $1",
+        licence.id,
+        licence.status,
+        licence.revoke_reason,
+        licence.plan_id,
+        licence.paid_until,
+        licence.cancel_at_period_end,
+        licence.past_due_since,
+        licence.ended_at,
+    )
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
+/// The last four characters of the licence's key.
+pub async fn hint_of(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!("select key_hint from app.licences where id = $1", id)
+        .fetch_optional(db)
+        .await
+}

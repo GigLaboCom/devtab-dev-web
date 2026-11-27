@@ -1,5 +1,6 @@
 //! HTTP routers and the middleware stack.
 
+pub mod checkouts;
 pub mod client_ip;
 pub mod cors;
 pub mod error;
@@ -9,6 +10,7 @@ pub mod json;
 pub mod plans;
 pub mod rate_limit;
 pub mod v1;
+pub mod webhooks;
 
 use std::any::Any;
 use std::time::Duration;
@@ -58,6 +60,11 @@ pub fn internal_routes(config: &Config, state: AppState) -> Router {
 /// request id → trace → propagate request id → error shape → body limit →
 /// timeout → catch panic.
 pub fn with_layers(router: Router) -> Router {
+    with_layers_limited(router, BODY_LIMIT)
+}
+
+/// [`with_layers`] with another body limit (the webhooks take larger bodies).
+pub fn with_layers_limited(router: Router, body_limit: usize) -> Router {
     let trace = TraceLayer::new_for_http()
         .make_span_with(|req: &Request<Body>| {
             let request_id = req
@@ -80,7 +87,7 @@ pub fn with_layers(router: Router) -> Router {
             .layer(trace)
             .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER))
             .layer(middleware::from_fn(error_shape))
-            .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
+            .layer(RequestBodyLimitLayer::new(body_limit))
             .layer(TimeoutLayer::with_status_code(
                 StatusCode::SERVICE_UNAVAILABLE,
                 REQUEST_TIMEOUT,
