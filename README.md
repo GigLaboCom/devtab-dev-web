@@ -580,6 +580,24 @@ installation id comes from the extension, never from the address, so no other
 site can make a page take a seat for an installation of its choosing.
 `DEVTAB_EXTENSION_IDS` lists the extension builds the page talks to.
 
+### Teams
+
+A team plan (`min_members` in the plans file) is sold per member, on the site
+only: `GET /v1/plans` leaves it out, so the extension's cards and contract stay
+as they are; `GET /internal/plans` gives its `min_members`. The checkout takes
+`members` (at least `min_members`, up to 1000) and lets the buyer change the
+number on Stripe's page; later the owner changes it in Stripe's portal. The
+licence keeps the number (`members`) and gets the plan's seats for each
+member, and every subscription event brings both in line.
+
+The buyer owns the team and is its first member. On
+`/internal/licences/{lid}/members` they list, invite (`POST {"email"}`, up to
+`members` − 1 addresses; `team-full` beyond, `not-a-team` for a personal
+licence) and remove (`DELETE …/{email}`) members. An invited person signs in
+with the address and connects from their account, as the owner does; the
+browsers a member connected so are disconnected when they are removed. The
+team's key works too, from the same seats.
+
 ### The internal API's types
 
 The internal listener's routes and their bodies are described with `utoipa`
