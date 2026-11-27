@@ -281,6 +281,19 @@ export interface components {
             /** @description ISO 4217, upper case. */
             currency: string;
         };
+        /** @description A step of a team plan's price. */
+        PriceTier: {
+            /**
+             * Format: int64
+             * @description Per member, in minor units.
+             */
+            amount: number;
+            /**
+             * Format: int32
+             * @description Up to this many members; null: any number above the previous step.
+             */
+            upTo: number | null;
+        };
         /** @description The answer of `GET /internal/plans`. */
         SiteCatalogue: {
             /** @description The catalogue's version. */
@@ -320,6 +333,12 @@ export interface components {
              *     personal plan.
              */
             minMembers: number | null;
+            /**
+             * @description A team plan's price steps by the team's size, in the price's
+             *     currency: every member pays the step the whole team reaches. Null for
+             *     a flat price.
+             */
+            tiers: components["schemas"]["PriceTier"][] | null;
         };
         /** @description A started checkout: where to send the buyer, or the form to mount. */
         StartedCheckout: {

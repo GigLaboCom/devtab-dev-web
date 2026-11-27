@@ -19,11 +19,11 @@ use sqlx::PgConnection;
 use time::OffsetDateTime;
 
 use super::catalogue::{self, CatalogueRows, CatalogueSettings};
-use super::file::PlansFile;
+use super::file::{PlanEntry, PlansFile, PriceRef};
 use super::{MAX_AMOUNT, MAX_ANSWER_BYTES, MAX_PLANS, currency};
 use crate::admin::Context;
 use crate::clock::rfc3339;
-use crate::payments::{Billing, PaymentProvider, fake};
+use crate::payments::{Billing, FoundPrice, PaymentProvider, fake};
 use crate::store::audit;
 use crate::store::plans::{self as store, NewPrice, PlanRow, PlanTextRow, PriceRow};
 
@@ -61,27 +61,13 @@ pub async fn resolve_prices(
                     continue;
                 }
             };
-            let billed = match &found.billing {
-                Billing::Unknown => None,
-                Billing::OneTime => Some(None),
-                Billing::Every(interval) => Some(Some(interval)),
+            let tiers = match check_found(entry, price, &found) {
+                Ok(tiers) => tiers,
+                Err(problem) => {
+                    problems.push(problem);
+                    continue;
+                }
             };
-            if let Some(billed) = billed
-                && billed != entry.plan.interval.as_ref()
-            {
-                let every = |interval: Option<&String>| {
-                    interval.map_or("once".to_owned(), |i| format!("every {i}"))
-                };
-                problems.push(format!(
-                    "plan `{}`: price {} at {} bills {}, the plan {}",
-                    entry.plan.id,
-                    price.key,
-                    price.provider,
-                    every(billed),
-                    every(entry.plan.interval.as_ref())
-                ));
-                continue;
-            }
             let snapshot = found.snapshot;
             if !currency::allowed_at(&price.provider, &snapshot.currency) {
                 problems.push(format!(
@@ -115,6 +101,7 @@ pub async fn resolve_prices(
                 provider_price_id: found.id,
                 currency: snapshot.currency,
                 amount_minor: snapshot.amount_minor,
+                tiers,
             });
         }
     }
@@ -126,6 +113,48 @@ pub async fn resolve_prices(
             problems.join("\n  - ")
         )
     }
+}
+
+/// What a found price must be for its plan: billed as often (when the
+/// provider says), and stepped only for a team plan; its steps as stored.
+fn check_found(
+    entry: &PlanEntry,
+    price: &PriceRef,
+    found: &FoundPrice,
+) -> Result<Option<serde_json::Value>, String> {
+    let billed = match &found.billing {
+        Billing::Unknown => None,
+        Billing::OneTime => Some(None),
+        Billing::Every(interval) => Some(Some(interval)),
+    };
+    if let Some(billed) = billed
+        && billed != entry.plan.interval.as_ref()
+    {
+        let every = |interval: Option<&String>| {
+            interval.map_or("once".to_owned(), |i| format!("every {i}"))
+        };
+        return Err(format!(
+            "plan `{}`: price {} at {} bills {}, the plan {}",
+            entry.plan.id,
+            price.key,
+            price.provider,
+            every(billed),
+            every(entry.plan.interval.as_ref())
+        ));
+    }
+    if found.tiers.is_empty() {
+        return Ok(None);
+    }
+    if entry.plan.min_members.is_none() {
+        return Err(format!(
+            "plan `{}`: price {} at {} steps down with the quantity, which only a team plan may \
+             (min_members)",
+            entry.plan.id, price.key, price.provider
+        ));
+    }
+    serde_json::to_value(&found.tiers)
+        .map(Some)
+        .map_err(|err| format!("plan `{}`: the price's tiers: {err}", entry.plan.id))
 }
 
 /// The next catalogue version after `current` on `now`'s date:
@@ -303,7 +332,8 @@ fn compare_prices<'a>(
             Some(old)
                 if !old.active
                     || old.currency != price.currency
-                    || old.amount_minor != price.amount_minor =>
+                    || old.amount_minor != price.amount_minor
+                    || old.tiers != price.tiers =>
             {
                 writeln!(
                     out,
@@ -371,6 +401,7 @@ fn after(
             currency: p.currency.clone(),
             amount_minor: p.amount_minor,
             active: true,
+            tiers: None,
         }))
         .collect();
     CatalogueRows {
@@ -436,9 +467,15 @@ async fn apply(
         store::deactivate_price(&mut *conn, old.id).await?;
     }
     for (old, now) in &changes.changed_prices {
-        store::update_price(&mut *conn, old.id, &now.currency, now.amount_minor)
-            .await
-            .with_context(|| format!("updating price {}", now.provider_price_id))?;
+        store::update_price(
+            &mut *conn,
+            old.id,
+            &now.currency,
+            now.amount_minor,
+            now.tiers.as_ref(),
+        )
+        .await
+        .with_context(|| format!("updating price {}", now.provider_price_id))?;
     }
     for price in &changes.new_prices {
         store::insert_price(&mut *conn, price)
@@ -638,6 +675,26 @@ mod tests {
                     PriceKey::LookupKey(k) if k == "monthly" => Billing::Every("month".to_owned()),
                     PriceKey::LookupKey(k) if k == "yearly" => Billing::Every("year".to_owned()),
                     PriceKey::LookupKey(k) if k == "once" => Billing::OneTime,
+                    PriceKey::LookupKey(k) if k == "stepped" => {
+                        return Ok(FoundPrice {
+                            id: "price_stepped".to_owned(),
+                            snapshot: PriceSnapshot {
+                                currency: "EUR".to_owned(),
+                                amount_minor: 600,
+                            },
+                            billing: Billing::Every("month".to_owned()),
+                            tiers: vec![
+                                crate::payments::Tier {
+                                    up_to: Some(4),
+                                    amount_minor: 600,
+                                },
+                                crate::payments::Tier {
+                                    up_to: None,
+                                    amount_minor: 500,
+                                },
+                            ],
+                        });
+                    }
                     other => return Err(ProviderError::NotFound(other.to_string())),
                 };
                 Ok(FoundPrice {
@@ -647,6 +704,7 @@ mod tests {
                         amount_minor: 900,
                     },
                     billing,
+                    tiers: Vec::new(),
                 })
             })
         }
@@ -686,6 +744,34 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("does not support lookup keys"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn only_a_team_plan_s_price_steps_down_with_the_quantity() {
+        let plan = |min_members: &str| {
+            file::parse(&format!(
+                "[[plan]]\nid = \"pro\"\nkind = \"subscription\"\ninterval = \"month\"\nseats = 1\n\
+                 sort = 1\n{min_members}[plan.texts.en]\nname = \"Pro\"\n[[plan.prices]]\n\
+                 provider = \"keyed\"\nlookup_key = \"stepped\"\n"
+            ))
+            .unwrap()
+        };
+        let err = resolve_prices(&plan(""), &[&Keyed])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("only a team plan"), "{err}");
+        let prices = resolve_prices(&plan("min_members = 2\n"), &[&Keyed])
+            .await
+            .unwrap();
+        assert_eq!(prices[0].amount_minor, 600);
+        assert_eq!(
+            prices[0].tiers,
+            Some(serde_json::json!([
+                {"up_to": 4, "amount_minor": 600},
+                {"up_to": null, "amount_minor": 500}
+            ]))
+        );
     }
 
     #[tokio::test]

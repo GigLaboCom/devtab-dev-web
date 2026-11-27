@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "insert into app.plan_prices (plan_id, provider, provider_price_id, currency, amount_minor)\n         values ($1, $2, $3, $4, $5)\n         returning id",
+  "query": "insert into app.plan_prices\n           (plan_id, provider, provider_price_id, currency, amount_minor, tiers)\n         values ($1, $2, $3, $4, $5, $6)\n         returning id",
   "describe": {
     "columns": [
       {
@@ -21,12 +21,13 @@
         "Text",
         "Text",
         "Bpchar",
-        "Int8"
+        "Int8",
+        "Jsonb"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "4690d30846b5d5b944dec62a5dd1f6feb78286b1d74c84c5546c977782045e3b"
+  "hash": "52140c75cc159c450a77cc24e0639ae3001eb4b9edf98ef4b871c56f2220dde4"
 }

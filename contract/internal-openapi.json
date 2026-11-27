@@ -917,6 +917,30 @@
           }
         }
       },
+      "PriceTier": {
+        "type": "object",
+        "description": "A step of a team plan's price.",
+        "required": [
+          "upTo",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Per member, in minor units."
+          },
+          "upTo": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Up to this many members; null: any number above the previous step.",
+            "minimum": 0
+          }
+        }
+      },
       "SiteCatalogue": {
         "type": "object",
         "description": "The answer of `GET /internal/plans`.",
@@ -972,7 +996,8 @@
             "required": [
               "available",
               "locale",
-              "minMembers"
+              "minMembers",
+              "tiers"
             ],
             "properties": {
               "available": {
@@ -990,6 +1015,16 @@
                 ],
                 "format": "int32",
                 "description": "A team plan's smallest team: its price is per member. Null for a\npersonal plan."
+              },
+              "tiers": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "$ref": "#/components/schemas/PriceTier"
+                },
+                "description": "A team plan's price steps by the team's size, in the price's\ncurrency: every member pays the step the whole team reaches. Null for\na flat price."
               }
             }
           }

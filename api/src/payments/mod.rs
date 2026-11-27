@@ -65,13 +65,23 @@ pub enum Billing {
     Every(String),
 }
 
+/// A step of a volume-tiered price: up to this many (none: any number
+/// above the previous step), each of them costs this.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Tier {
+    pub up_to: Option<u32>,
+    pub amount_minor: i64,
+}
+
 /// A price found by its key: the provider's id of it, its amount and how
-/// often it bills.
+/// often it bills; a volume-tiered price has its steps (and the first step's
+/// amount as its amount).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FoundPrice {
     pub id: String,
     pub snapshot: PriceSnapshot,
     pub billing: Billing,
+    pub tiers: Vec<Tier>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -214,6 +224,7 @@ pub trait PaymentProvider: Send + Sync + fmt::Debug {
                     id: id.clone(),
                     snapshot: self.price(id).await?,
                     billing: Billing::Unknown,
+                    tiers: Vec::new(),
                 }),
                 PriceKey::LookupKey(_) => Err(ProviderError::Unsupported(format!(
                     "lookup keys at {}",

@@ -77,6 +77,29 @@ async fn price_by_id(
             )),
         ),
         "price_once" => (StatusCode::OK, Json(price(&id, Some(5000), &Value::Null))),
+        "price_team" | "price_graduated" | "price_flat_fee" => {
+            let mut team = price(
+                &id,
+                None,
+                &json!({"interval": "month", "interval_count": 1}),
+            );
+            team["billing_scheme"] = json!("tiered");
+            team["tiers_mode"] = json!(if id == "price_graduated" {
+                "graduated"
+            } else {
+                "volume"
+            });
+            let fee = if id == "price_flat_fee" {
+                json!(100)
+            } else {
+                Value::Null
+            };
+            team["tiers"] = json!([
+                {"up_to": 4, "unit_amount": 600, "flat_amount": fee},
+                {"up_to": null, "unit_amount": 500, "flat_amount": null},
+            ]);
+            (StatusCode::OK, Json(team))
+        }
         "price_tiered" => (
             StatusCode::OK,
             Json(price(&id, None, &json!({"interval": "month"}))),
@@ -441,4 +464,42 @@ fn a_team_checkout_lets_the_buyer_change_the_number_of_members() {
         value(&personal, "line_items[0][adjustable_quantity][enabled]"),
         None
     );
+}
+
+#[tokio::test]
+async fn a_volume_tiered_price_carries_its_steps_and_other_tiers_are_refused() {
+    let (url, _) = stand_in(0).await;
+    let stripe = provider(&url, CheckoutUi::Hosted, true);
+    let team = stripe
+        .resolve(&PriceKey::Id("price_team".to_owned()))
+        .await
+        .unwrap();
+    assert_eq!(team.snapshot.amount_minor, 600, "the smallest team's step");
+    assert_eq!(
+        team.tiers,
+        [
+            Tier {
+                up_to: Some(4),
+                amount_minor: 600
+            },
+            Tier {
+                up_to: None,
+                amount_minor: 500
+            },
+        ]
+    );
+    for refused in ["price_graduated", "price_flat_fee"] {
+        assert!(
+            matches!(
+                stripe.resolve(&PriceKey::Id(refused.to_owned())).await,
+                Err(ProviderError::Refused(_))
+            ),
+            "{refused}"
+        );
+    }
+    let flat = stripe
+        .resolve(&PriceKey::Id("price_month".to_owned()))
+        .await
+        .unwrap();
+    assert!(flat.tiers.is_empty());
 }

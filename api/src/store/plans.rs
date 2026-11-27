@@ -46,6 +46,8 @@ pub struct PriceRow {
     pub currency: String,
     pub amount_minor: i64,
     pub active: bool,
+    /// A volume-tiered price's steps; none for a flat price.
+    pub tiers: Option<serde_json::Value>,
 }
 
 /// A price to write: what the provider states for its price id.
@@ -56,6 +58,8 @@ pub struct NewPrice {
     pub provider_price_id: String,
     pub currency: String,
     pub amount_minor: i64,
+    /// A volume-tiered price's steps; none for a flat price.
+    pub tiers: Option<serde_json::Value>,
 }
 
 pub async fn all(db: impl PgExecutor<'_>) -> Result<Vec<PlanRow>, sqlx::Error> {
@@ -166,7 +170,7 @@ pub async fn prices(db: impl PgExecutor<'_>) -> Result<Vec<PriceRow>, sqlx::Erro
     sqlx::query_as!(
         PriceRow,
         r#"select id, plan_id, provider, provider_price_id, currency::text as "currency!",
-                  amount_minor, active
+                  amount_minor, active, tiers
            from app.plan_prices order by plan_id, provider, currency, created_at"#,
     )
     .fetch_all(db)
@@ -181,7 +185,7 @@ pub async fn active_prices(
     sqlx::query_as!(
         PriceRow,
         r#"select id, plan_id, provider, provider_price_id, currency::text as "currency!",
-                  amount_minor, active
+                  amount_minor, active, tiers
            from app.plan_prices where provider = $1 and active
            order by plan_id, currency"#,
         provider,
@@ -200,7 +204,7 @@ pub async fn find_price(
     sqlx::query_as!(
         PriceRow,
         r#"select id, plan_id, provider, provider_price_id, currency::text as "currency!",
-                  amount_minor, active
+                  amount_minor, active, tiers
            from app.plan_prices where provider = $1 and provider_price_id = $2"#,
         provider,
         provider_price_id,
@@ -218,7 +222,7 @@ pub async fn active_price_of_plan(
     sqlx::query_as!(
         PriceRow,
         r#"select id, plan_id, provider, provider_price_id, currency::text as "currency!",
-                  amount_minor, active
+                  amount_minor, active, tiers
            from app.plan_prices where plan_id = $1 and provider = $2 and active
            order by currency limit 1"#,
         plan_id,
@@ -230,14 +234,16 @@ pub async fn active_price_of_plan(
 
 pub async fn insert_price(db: impl PgExecutor<'_>, price: &NewPrice) -> Result<Uuid, sqlx::Error> {
     sqlx::query_scalar!(
-        "insert into app.plan_prices (plan_id, provider, provider_price_id, currency, amount_minor)
-         values ($1, $2, $3, $4, $5)
+        "insert into app.plan_prices
+           (plan_id, provider, provider_price_id, currency, amount_minor, tiers)
+         values ($1, $2, $3, $4, $5, $6)
          returning id",
         price.plan_id,
         price.provider,
         price.provider_price_id,
         price.currency as _,
         price.amount_minor,
+        price.tiers,
     )
     .fetch_one(db)
     .await
@@ -249,12 +255,15 @@ pub async fn update_price(
     id: Uuid,
     currency: &str,
     amount_minor: i64,
+    tiers: Option<&serde_json::Value>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "update app.plan_prices set currency = $2, amount_minor = $3, active = true where id = $1",
+        "update app.plan_prices set currency = $2, amount_minor = $3, tiers = $4, active = true
+         where id = $1",
         id,
         currency as _,
         amount_minor,
+        tiers,
     )
     .execute(db)
     .await

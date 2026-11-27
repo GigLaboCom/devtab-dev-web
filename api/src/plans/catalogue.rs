@@ -143,6 +143,22 @@ pub struct SitePlan {
     /// personal plan.
     #[schema(required = true)]
     pub min_members: Option<i16>,
+    /// A team plan's price steps by the team's size, in the price's
+    /// currency: every member pays the step the whole team reaches. Null for
+    /// a flat price.
+    #[schema(required = true)]
+    pub tiers: Option<Vec<PriceTier>>,
+}
+
+/// A step of a team plan's price.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PriceTier {
+    /// Up to this many members; null: any number above the previous step.
+    #[schema(required = true)]
+    pub up_to: Option<u32>,
+    /// Per member, in minor units.
+    pub amount: i64,
 }
 
 /// The answer of `GET /internal/plans`.
@@ -269,8 +285,11 @@ pub fn site(
     let plans = rows
         .plans
         .iter()
-        .filter_map(|plan| card(rows, plan, locale, settings, now).map(|c| (c, plan.min_members)))
-        .map(|((plan, sellable, texts_locale), min_members)| {
+        .filter_map(|plan| {
+            card(rows, plan, locale, settings, now)
+                .map(|c| (c, plan.min_members, tiers_of(rows, plan, settings)))
+        })
+        .map(|((plan, sellable, texts_locale), min_members, tiers)| {
             // The extension gets the first six that can be sold; the page shows the same.
             let available = sellable && sold < MAX_PLANS;
             sold += usize::from(available);
@@ -279,6 +298,7 @@ pub fn site(
                 available,
                 locale: texts_locale,
                 min_members,
+                tiers,
             }
         })
         .collect();
@@ -290,6 +310,30 @@ pub fn site(
         locale: locale.to_owned(),
         plans,
     }
+}
+
+/// The steps of the price the plan's card shows, if it has steps.
+fn tiers_of(
+    rows: &CatalogueRows,
+    plan: &PlanRow,
+    settings: &CatalogueSettings,
+) -> Option<Vec<PriceTier>> {
+    let row = rows
+        .prices
+        .iter()
+        .filter(|p| p.active && p.plan_id == plan.id)
+        .filter(|p| settings.provider.as_deref() == Some(p.provider.as_str()))
+        .find(|p| currency::servable(&p.currency, settings.test_currencies))?;
+    let tiers: Vec<crate::payments::Tier> = serde_json::from_value(row.tiers.clone()?).ok()?;
+    Some(
+        tiers
+            .into_iter()
+            .map(|t| PriceTier {
+                up_to: t.up_to,
+                amount: t.amount_minor,
+            })
+            .collect(),
+    )
 }
 
 /// A strong `ETag` of an answer's body: the first 16 bytes of its SHA-256.
@@ -358,6 +402,7 @@ mod tests {
             currency: currency.to_owned(),
             amount_minor: amount,
             active: true,
+            tiers: None,
         }
     }
 

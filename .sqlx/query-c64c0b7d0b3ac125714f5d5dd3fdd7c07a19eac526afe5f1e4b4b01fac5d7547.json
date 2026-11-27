@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.plan_prices set currency = $2, amount_minor = $3, tiers = $4, active = true\n         where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bpchar",
+        "Int8",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c64c0b7d0b3ac125714f5d5dd3fdd7c07a19eac526afe5f1e4b4b01fac5d7547"
+}

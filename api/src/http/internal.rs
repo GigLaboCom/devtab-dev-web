@@ -20,7 +20,7 @@ use super::error::{AppError, ErrorBody};
 use super::{checkouts, connect, members, plans};
 use crate::auth::CurrentUser;
 use crate::config::Config;
-use crate::plans::catalogue::{Plan, PlanKind, Price, SiteCatalogue, SitePlan, Term};
+use crate::plans::catalogue::{Plan, PlanKind, Price, PriceTier, SiteCatalogue, SitePlan, Term};
 use crate::state::AppState;
 
 /// The process is up.
@@ -142,6 +142,7 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         PlanKind,
         Term,
         Price,
+        PriceTier,
         plans::Locale,
         checkouts::NewCheckout,
         checkouts::StartedCheckout,

@@ -92,6 +92,7 @@ async fn rows_of(path: &Path, version: &str) -> CatalogueRows {
                 currency: p.currency,
                 amount_minor: p.amount_minor,
                 active: true,
+                tiers: None,
             })
             .collect(),
     }
@@ -827,6 +828,7 @@ async fn insert_test_plans(owner: &mut PgConnection, clock_now: OffsetDateTime) 
                     provider_price_id: format!("pri_TEST_{}", row.id),
                     currency: "XTS".to_owned(),
                     amount_minor: 1111,
+                    tiers: None,
                 },
             )
             .await

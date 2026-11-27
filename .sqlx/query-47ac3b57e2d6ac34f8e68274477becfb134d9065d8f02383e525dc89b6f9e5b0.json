@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, plan_id, provider, provider_price_id, currency::text as \"currency!\",\n                  amount_minor, active\n           from app.plan_prices where provider = $1 and provider_price_id = $2",
+  "query": "select id, plan_id, provider, provider_price_id, currency::text as \"currency!\",\n                  amount_minor, active, tiers\n           from app.plan_prices where provider = $1 and provider_price_id = $2",
   "describe": {
     "columns": [
       {
@@ -74,6 +74,17 @@
             "name": "active"
           }
         }
+      },
+      {
+        "ordinal": 7,
+        "name": "tiers",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "app.plan_prices",
+            "name": "tiers"
+          }
+        }
       }
     ],
     "parameters": {
@@ -89,8 +100,9 @@
       false,
       null,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "ddd7f0d81834e452e449d9d710fc8e87a8d16bc2da6de84caa3a20ec2c9151c1"
+  "hash": "47ac3b57e2d6ac34f8e68274477becfb134d9065d8f02383e525dc89b6f9e5b0"
 }

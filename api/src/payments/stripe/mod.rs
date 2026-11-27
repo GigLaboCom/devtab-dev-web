@@ -25,6 +25,7 @@ use self::client::Client;
 use self::keys::ApiKey;
 use super::{
     Billing, FoundPrice, PaymentProvider, PriceKey, PriceSnapshot, ProviderError, ProviderFuture,
+    Tier,
 };
 
 /// The provider's name in `DEVTAB_PAYMENTS` and `config/plans.toml`.
@@ -342,7 +343,10 @@ impl StripeProvider {
         if !is_object_id(id) {
             return Err(ProviderError::NotFound(format!("price `{id}`")));
         }
-        let price = self.client.get(&format!("/v1/prices/{id}"), &[]).await?;
+        let price = self
+            .client
+            .get(&format!("/v1/prices/{id}"), &[("expand[]", "tiers")])
+            .await?;
         read_price(&price)
     }
 
@@ -351,7 +355,12 @@ impl StripeProvider {
             .client
             .get(
                 "/v1/prices",
-                &[("lookup_keys[]", key), ("active", "true"), ("limit", "2")],
+                &[
+                    ("lookup_keys[]", key),
+                    ("active", "true"),
+                    ("limit", "2"),
+                    ("expand[]", "data.tiers"),
+                ],
             )
             .await?;
         match list
@@ -405,22 +414,26 @@ fn text(object: &Value, field: &str) -> Result<String, ProviderError> {
         .ok_or_else(|| ProviderError::Unavailable(format!("Stripe's answer has no `{field}`")))
 }
 
-/// A Price object: its id, a fixed amount per unit, the currency and how
-/// often it bills (`month`; `3 month` when every three months).
+/// A Price object: its id, a fixed amount per unit or volume tiers, the
+/// currency and how often it bills (`month`; `3 month` when every three
+/// months).
 fn read_price(price: &Value) -> Result<FoundPrice, ProviderError> {
     let id = text(price, "id")?;
     if price.get("active").and_then(Value::as_bool) == Some(false) {
         return Err(ProviderError::NotFound(format!("active price {id}")));
     }
-    let amount_minor = price
-        .get("unit_amount")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| {
-            ProviderError::Refused(format!(
-                "price {id} has no fixed unit amount (tiered or customer-chosen prices are not \
-                 plans)"
-            ))
-        })?;
+    let tiers = read_tiers(&id, price)?;
+    let amount_minor = match tiers.first() {
+        Some(first) => first.amount_minor,
+        None => price
+            .get("unit_amount")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| {
+                ProviderError::Refused(format!(
+                    "price {id} has no fixed unit amount and no volume tiers"
+                ))
+            })?,
+    };
     let currency = text(price, "currency")?.to_ascii_uppercase();
     let billing = match price.get("recurring").filter(|r| !r.is_null()) {
         None => Billing::OneTime,
@@ -444,7 +457,58 @@ fn read_price(price: &Value) -> Result<FoundPrice, ProviderError> {
             amount_minor,
         },
         billing,
+        tiers,
     })
+}
+
+/// The steps of a tiered price: volume tiers only (each member pays the step
+/// the whole quantity reaches), a unit amount each, no flat fees, the last
+/// without a limit. None for a per-unit price.
+fn read_tiers(id: &str, price: &Value) -> Result<Vec<Tier>, ProviderError> {
+    if price.get("billing_scheme").and_then(Value::as_str) != Some("tiered") {
+        return Ok(Vec::new());
+    }
+    let refuse = |why: &str| ProviderError::Refused(format!("price {id}: {why}"));
+    if price.get("tiers_mode").and_then(Value::as_str) != Some("volume") {
+        return Err(refuse(
+            "tiered, but not by volume (graduated tiers are not plans)",
+        ));
+    }
+    let list = price
+        .get("tiers")
+        .and_then(Value::as_array)
+        .filter(|list| !list.is_empty())
+        .ok_or_else(|| refuse("tiered, but its tiers are not in the answer"))?;
+    let mut tiers = Vec::new();
+    for tier in list {
+        if tier
+            .get("flat_amount")
+            .and_then(Value::as_i64)
+            .is_some_and(|f| f != 0)
+        {
+            return Err(refuse("a tier has a flat fee"));
+        }
+        let amount_minor = tier
+            .get("unit_amount")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| refuse("a tier has no unit amount"))?;
+        let up_to = match tier.get("up_to") {
+            None | Some(Value::Null) => None,
+            Some(n) => Some(
+                n.as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| refuse("a tier's limit is not a count"))?,
+            ),
+        };
+        tiers.push(Tier {
+            up_to,
+            amount_minor,
+        });
+    }
+    if tiers.last().is_some_and(|t| t.up_to.is_some()) {
+        return Err(refuse("its last tier has a limit"));
+    }
+    Ok(tiers)
 }
 
 #[cfg(test)]
