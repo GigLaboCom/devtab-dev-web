@@ -63,6 +63,22 @@ const en = {
       errorLink: 'This link didn’t work. Enter the code from the e-mail instead.',
       errorRate: 'Too many attempts. Try again later.',
     },
+    /** /pro/connect/: connecting the extension to the account; awaiting the owner. */
+    connect: {
+      title: 'Connect the extension',
+      description: 'Connect the extension in this browser to your account.',
+      heading: 'Connect the extension',
+      working: 'Connecting the extension in this browser…',
+      connected: 'Done: the extension in this browser now has your licence.',
+      noExtension: 'The extension isn’t installed in this browser, or it’s a version that can’t connect.',
+      noLicence: 'Your account has no active licence yet.',
+      choose: 'Your account has more than one licence: enter the key of the one to use in the extension.',
+      seats: 'Your licence is active in as many browsers as it allows. Disconnect one first.',
+      inactive: 'Your licence isn’t active: the subscription ended or the key was blocked.',
+      failed: 'Couldn’t connect the extension. Try again, or enter your licence key in the extension.',
+      keyNote: 'You can always enter your licence key in the extension instead.',
+      plans: 'See the plans',
+    },
   },
   notFound: {
     title: 'Page not found',

@@ -18,6 +18,7 @@ const allowed = new Set([
   'DEVTAB_SUPABASE_URL',
   'DEVTAB_SUPABASE_PUBLISHABLE_KEY',
   'DEVTAB_RATE_SIGN_IN_PER_IP',
+  'DEVTAB_EXTENSION_IDS',
   'SITE_URL',
   // Astro's own, set at build time.
   'DEV',

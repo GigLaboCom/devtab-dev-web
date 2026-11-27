@@ -1,0 +1,120 @@
+---
+/**
+ * /pro/connect/: where the extension's "Connect with your account" button
+ * leads. Signed out, the person is sent to the sign-in page and back. Signed
+ * in, the page's script asks the extension (through `externally_connectable`,
+ * which only lets this site's pages talk to it) for its installation id,
+ * asks `/auth/connect/` for an activation of the person's licence for that
+ * installation, and hands the answer to the extension, which checks and keeps
+ * it as after entering a key. The key stays the other way in.
+ *
+ * Messages: `{type: "devtab:hello"}` → `{inst}`; then
+ * `{type: "devtab:licence", lid, token, secret}` → `{ok: true}` or
+ * `{ok: false, reason}`.
+ */
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { defaultLocale, localeOfParam, messages } from '../../../i18n';
+import { extensionIds } from '../../../lib/extension';
+
+export const prerender = false;
+
+const locale = localeOfParam(Astro.params.locale);
+// No page here: the server answers with the site's 404 page.
+if (!locale) return new Response(null, { status: 404 });
+const t = messages(locale).pages.connect;
+Astro.response.headers.set('Cache-Control', 'no-store');
+
+const prefix = locale === defaultLocale ? '' : `/${locale}`;
+if (!Astro.locals.auth) {
+  const next = encodeURIComponent(`${prefix}/pro/connect/`);
+  return Astro.redirect(`${prefix}/sign-in/?next=${next}`, 303);
+}
+const ids = extensionIds();
+const states = {
+  working: t.working,
+  connected: t.connected,
+  noExtension: t.noExtension,
+  noLicence: t.noLicence,
+  choose: t.choose,
+  seats: t.seats,
+  inactive: t.inactive,
+  failed: t.failed,
+};
+---
+
+<BaseLayout locale={locale} page="connect">
+  <h1 class="text-4xl font-semibold tracking-tight">{t.heading}</h1>
+  <p
+    id="connect"
+    class="mt-4 text-lg"
+    role="status"
+    data-ids={JSON.stringify(ids)}
+    data-states={JSON.stringify(states)}>
+    {ids.length ? t.working : t.noExtension}
+  </p>
+  <p class="mt-4 text-sm text-muted-foreground">{t.keyNote}</p>
+  <a class="mt-4 inline-flex text-sm underline underline-offset-4" href={`${prefix}/pro/`}>
+    {t.plans}
+  </a>
+</BaseLayout>
+
+<script>
+  type Answer = { inst?: unknown; ok?: unknown; reason?: unknown } | undefined;
+
+  const status = document.getElementById('connect');
+  const ids = JSON.parse(status?.dataset.ids ?? '[]') as string[];
+  const states = JSON.parse(status?.dataset.states ?? '{}') as Record<string, string>;
+  const show = (state: string): void => {
+    if (status) status.textContent = states[state] ?? states.failed ?? '';
+  };
+
+  // chrome.runtime exists on a page only when an installed extension lists
+  // this site in externally_connectable.
+  const runtime = (globalThis as { chrome?: { runtime?: { sendMessage?: unknown; lastError?: unknown } } }).chrome
+    ?.runtime;
+  const send = (id: string, message: object): Promise<Answer> =>
+    new Promise(resolve => {
+      const sendMessage = runtime?.sendMessage as
+        ((id: string, message: object, reply: (answer: Answer) => void) => void) | undefined;
+      if (!sendMessage) return resolve(undefined);
+      try {
+        sendMessage(id, message, answer => {
+          // Reading lastError keeps Chrome from logging an unanswered message.
+          resolve(runtime?.lastError ? undefined : answer);
+        });
+      } catch {
+        resolve(undefined);
+      }
+    });
+
+  const errors: Record<string, string> = {
+    'no-licence': 'noLicence',
+    'choose-licence': 'choose',
+    'seat-limit': 'seats',
+    'licence-inactive': 'inactive',
+    'key-blocked': 'inactive',
+  };
+
+  async function connect(): Promise<void> {
+    for (const id of ids) {
+      const hello = await send(id, { type: 'devtab:hello' });
+      if (typeof hello?.inst !== 'string') continue;
+      const response = await fetch('/auth/connect/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ inst: hello.inst }),
+      }).catch(() => null);
+      const body = (await response?.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!response?.ok || !body) {
+        show(errors[String(body?.error)] ?? 'failed');
+        return;
+      }
+      const kept = await send(id, { type: 'devtab:licence', lid: body.lid, token: body.token, secret: body.secret });
+      show(kept?.ok === true ? 'connected' : 'failed');
+      return;
+    }
+    show('noExtension');
+  }
+
+  if (ids.length) void connect();
+</script>

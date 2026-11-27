@@ -123,6 +123,13 @@ test('every server page exists in every locale, with its language, canonical URL
     for (const locale of locales) {
       const where = `${id} (${locale})`;
       const { status, headers, html } = await get(pathOf(locale, page.path));
+      if (page.signIn) {
+        // Signed out: to the sign-in page of the same language, and back.
+        assert.equal(status, 303, where);
+        const next = encodeURIComponent(pathOf(locale, page.path));
+        assert.equal(headers.get('location'), `${pathOf(locale, 'sign-in/')}?next=${next}`, where);
+        continue;
+      }
       assert.equal(status, 200, where);
       assert.equal(tags(html, 'html')[0]?.get('lang'), locale, `${where}: <html lang>`);
       assert.match(html, /<title>[^<]+<\/title>/, `${where}: title`);
@@ -150,7 +157,7 @@ test('every server page exists in every locale, with its language, canonical URL
       // The server sends the policy as a header; the static pages carry it in a meta tag.
       const policy = headers.get('content-security-policy') ?? undefined;
       assert.deepEqual(cspProblems(html, policy), [], `${where}: content security policy`);
-      assert.deepEqual(tags(html, 'script'), [], `${where}: no client-side script`);
+      if (!page.script) assert.deepEqual(tags(html, 'script'), [], `${where}: no client-side script`);
     }
   }
 });
@@ -331,4 +338,19 @@ test('a link back without a code, or with one this browser did not ask for, retu
     const response = await get(path);
     assert.deepEqual([response.status, response.headers.get('location')], [303, location], path);
   }
+});
+
+test('/auth/connect/ answers only the site’s own pages, and only for a signed-in person', async () => {
+  const post = (headers: Record<string, string>) =>
+    fetch(`${base}/auth/connect/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ inst: 'AAAAAAAAAAAAAAAAAAAAAA' }),
+      redirect: 'manual',
+    });
+  const foreign = await post({ origin: 'https://elsewhere.example.invalid' });
+  assert.equal(foreign.status, 403);
+  const signedOut = await post({ origin: base });
+  assert.equal(signedOut.status, 401);
+  assert.equal(signedOut.headers.get('cache-control'), 'no-store');
 });
