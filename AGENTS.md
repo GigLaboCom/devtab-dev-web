@@ -131,6 +131,15 @@ any default attribution a tool adds:
   never logged; logs carry a licence id and the first four characters of an
   installation id, never a key, a secret, a token, an e-mail address or an IP
   address.
+- The API's mails go through `crate::mail` only: a queued `mail` job with
+  ids, never an address or a key, checked again when due; the provider is a
+  deployment's setting (`DEVTAB_MAIL`, listmonk first) with its secrets in
+  files. The mails' texts are templates in `mail/listmonk/` (en and ru for
+  every kind), awaiting the owner like the site's; never invent their copy.
+  Supabase Auth's own mails stay in `supabase/templates/`.
+- The trial without a card is a deployment's setting (`DEVTAB_TRIAL_DAYS`,
+  7 to 14) and an ordinary licence of kind `trial`, once per canonical inbox;
+  never a parallel path for its expiry.
 - Every change made through `devtab-api admin` writes an `app.admin_audit`
   row in the same transaction, with no personal data in it.
 - The plans' texts and prices are data, not code: `config/plans.toml`, synced
