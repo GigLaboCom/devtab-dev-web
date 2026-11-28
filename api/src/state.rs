@@ -4,15 +4,18 @@ use std::sync::Arc;
 
 use tokio::sync::Notify;
 
+use crate::accounts::Accounts;
 use crate::auth::{UserCache, Verifier};
 use crate::clock::SharedClock;
 use crate::config::Config;
 use crate::http::rate_limit::Limits;
 use crate::licence::LicenceSettings;
 use crate::licence::signer::Signer;
+use crate::mail::{MailSchedule, Mailer};
 use crate::payments::Payments;
 use crate::plans::catalogue::CatalogueSettings;
 use crate::store::Store;
+use crate::trial::TrialSettings;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -32,6 +35,19 @@ pub struct AppState {
     pub payments: Option<Arc<Payments>>,
     /// Wakes the queue's worker when a job is added.
     pub wake: Arc<Notify>,
+    /// Whether a checkout may start without a signed-in person
+    /// (`DEVTAB_GUEST_CHECKOUT`).
+    pub guest_checkout: bool,
+    /// Supabase Auth's admin API, which invites the buyer of a guest
+    /// checkout; none without the project's secret key, and then a guest
+    /// checkout is refused (and one already paid waits for it).
+    pub accounts: Option<Arc<Accounts>>,
+    /// Who sends the mails; none: `mail` jobs wait in the queue.
+    pub mailer: Option<Arc<dyn Mailer>>,
+    /// When the reminders go out.
+    pub mail_schedule: Arc<MailSchedule>,
+    /// The trial without a card; none: not offered.
+    pub trial: Option<Arc<TrialSettings>>,
 }
 
 impl AppState {
@@ -47,7 +63,26 @@ impl AppState {
             users: UserCache::default(),
             payments: None,
             wake: Arc::new(Notify::new()),
+            guest_checkout: config.guest_checkout,
+            accounts: None,
+            mailer: None,
+            mail_schedule: Arc::new(config.mail_schedule.clone()),
+            trial: config.trial.clone().map(Arc::new),
         }
+    }
+
+    /// The same state, sending mails with `mailer`.
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Arc<dyn Mailer>) -> Self {
+        self.mailer = Some(mailer);
+        self
+    }
+
+    /// The same state, inviting the buyers of guest checkouts with `accounts`.
+    #[must_use]
+    pub fn with_accounts(mut self, accounts: Accounts) -> Self {
+        self.accounts = Some(Arc::new(accounts));
+        self
     }
 
     /// The same state, taking payments with `payments`.

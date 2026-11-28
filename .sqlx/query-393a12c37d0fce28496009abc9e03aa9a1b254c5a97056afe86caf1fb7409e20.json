@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select licence_id, email from app.licence_members where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "licence_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.licence_members",
+            "name": "licence_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "email",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.licence_members",
+            "name": "email"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "393a12c37d0fce28496009abc9e03aa9a1b254c5a97056afe86caf1fb7409e20"
+}

@@ -8,10 +8,12 @@
 #
 #   script/site-server
 #
-# HOST, PORT, DEVTAB_API_INTERNAL_URL, DEVTAB_SUPABASE_URL and
-# DEVTAB_SUPABASE_PUBLISHABLE_KEY override the defaults. Sign-in mails link
-# back to this server: the local Auth accepts 127.0.0.1:4321 and
-# localhost:4321 (supabase/config.toml).
+# HOST, PORT, DEVTAB_API_INTERNAL_URL, DEVTAB_SUPABASE_URL,
+# DEVTAB_SUPABASE_PUBLISHABLE_KEY and DEVTAB_SIGN_IN_METHODS override the
+# defaults; the sign-in methods are the e-mail and passwords, which the local
+# stack serves on its own (Google needs a client: supabase/config.toml).
+# Sign-in mails link back to this server: the local Auth accepts
+# 127.0.0.1:4321 and localhost:4321 (supabase/config.toml).
 
 set -euo pipefail
 
@@ -27,6 +29,7 @@ fi
 export HOST="${HOST:-127.0.0.1}"
 export PORT="${PORT:-4321}"
 export DEVTAB_API_INTERNAL_URL="${DEVTAB_API_INTERNAL_URL:-http://127.0.0.1:8081}"
+export DEVTAB_SIGN_IN_METHODS="${DEVTAB_SIGN_IN_METHODS:-email,password}"
 if [[ -z "${DEVTAB_SUPABASE_PUBLISHABLE_KEY:-}" ]]; then
   DEVTAB_SUPABASE_PUBLISHABLE_KEY="$(local_status_value PUBLISHABLE_KEY || true)"
 fi

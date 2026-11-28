@@ -10,6 +10,8 @@ declare namespace App {
     auth: {
       userId: string;
       email: string | null;
+      /** The session's id (`session_id`): what a password reset is bound to. */
+      sessionId: string | null;
       /** Passed to the API as `Authorization: Bearer …`; never shown, logged or put in a page. */
       accessToken: string;
     } | null;

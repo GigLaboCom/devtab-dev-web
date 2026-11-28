@@ -1,0 +1,173 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id, user_id, plan_id, price_id, provider, provider_checkout_id, licence_id, status,\n                locale, created_at, expires_at, claim_hash, buyer\n         from app.checkouts where id = $1 and claim_hash = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "plan_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "plan_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "price_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "price_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "provider_checkout_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "provider_checkout_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "licence_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "licence_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "locale",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "locale"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "claim_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "claim_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "buyer",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "buyer"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "902b8fd683098b113e0de581471ac22d99875dc97f9e18f5b7b30337a4118185"
+}

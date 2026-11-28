@@ -1,0 +1,29 @@
+---
+/**
+ * Signing in with Google: a link to `/auth/google/` (a link, not a form: see
+ * that endpoint), with the page's language and `next`. The mark is a plain
+ * outline of the letter in the text's colour; nothing is loaded from Google.
+ */
+import type { Locale } from '../../i18n';
+import { ui } from '../../lib/auth/ui';
+
+interface Props {
+  locale: Locale;
+  next: string;
+  label: string;
+}
+
+const { locale, next, label } = Astro.props;
+const query = new URLSearchParams({ locale });
+if (next) query.set('next', next);
+---
+
+<a href={`/auth/google/?${query}`} rel="nofollow" class={ui.secondary}>
+  <svg viewBox="0 0 24 24" class="size-4 shrink-0" fill="currentColor" aria-hidden="true">
+    <path d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.9-1.75 2.98-4.32 2.98-7.35Z"></path>
+    <path d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.24-2.5c-.9.6-2.04.95-3.38.95-2.6 0-4.8-1.76-5.59-4.12H3.07v2.6A10 10 0 0 0 12 22Z"></path>
+    <path d="M6.41 13.9a6 6 0 0 1 0-3.8V7.5H3.07a10 10 0 0 0 0 9l3.34-2.6Z"></path>
+    <path d="M12 5.98c1.47 0 2.79.5 3.83 1.5l2.87-2.88A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.93 5.5l3.34 2.6C7.2 7.74 9.4 5.98 12 5.98Z"></path>
+  </svg>
+  {label}
+</a>

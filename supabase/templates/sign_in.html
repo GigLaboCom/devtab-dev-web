@@ -1,6 +1,8 @@
 {{- /* The sign-in mail of Supabase Auth (supabase/config.toml), for a new and
-       a known address alike: the link, which works in the browser that asked,
-       and the one-time code, which works anywhere. Russian when the account
+       a known address alike (a magic link, or the confirmation of a new
+       address, by the e-mail form or a sign-up with a password): the link,
+       which works in the browser that asked, and the one-time code, which
+       works anywhere. Russian when the account
        was made on a Russian page (user metadata `locale`), else English. The
        texts await the owner, like the site's (README.md). */ -}}
 {{ if eq (print .Data.locale) "ru" -}}

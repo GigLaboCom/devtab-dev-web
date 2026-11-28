@@ -1,0 +1,41 @@
+{{- /* The invite mail of Supabase Auth (supabase/config.toml): sent once to
+       the buyer of a purchase made without an account, whose new account the
+       API asked Auth to invite when the payment came through (user metadata
+       `locale`, `app` "devtab", `source` "purchase", `checkout`, `team`).
+       Russian when the purchase was made on a Russian page, else English;
+       "Team" for a team plan, else "Pro".
+
+       The button is a link the site's server checks: /auth/callback/ with
+       the token's hash and `type=invite`, on the project's Site URL (the
+       site's address, a setting of the project, never of the request). The
+       callback verifies it, starts the session and decides itself where to
+       go (the purchase's page, from the metadata): the link names no
+       landing, so nobody can steer it. Not {{ .ConfirmationURL }}, which
+       would carry the session in the address's fragment. The texts await
+       the owner, like the site's (README.md). */ -}}
+{{- $ru := eq (print .Data.locale) "ru" -}}
+{{- $plan := "Pro" -}}{{- if .Data.team -}}{{- $plan = "Team" -}}{{- end -}}
+{{- $locale := "en" -}}{{- if $ru -}}{{- $locale = "ru" -}}{{- end -}}
+{{ if $ru -}}
+<!doctype html>
+<html lang="ru">
+  <body>
+    <h1>Ваш DevTab.Dev {{ $plan }} готов</h1>
+    <p>Спасибо за покупку. Лицензия — в учётной записи на адрес, с которым вы платили. Подтвердите адрес, чтобы открыть её:</p>
+    <p><a href="{{ .SiteURL }}/auth/callback/?token_hash={{ .TokenHash }}&amp;type=invite&amp;locale={{ $locale }}">Открыть учётную запись</a></p>
+    <p>Там же — подключение расширения; ключ лицензии тоже работает. Ссылка действует один раз и недолго; потом входите на сайт с этим адресом.</p>
+    <p>Если вы ничего не покупали на DevTab.Dev, просто удалите это письмо.</p>
+  </body>
+</html>
+{{- else -}}
+<!doctype html>
+<html lang="en">
+  <body>
+    <h1>Your DevTab.Dev {{ $plan }} is ready</h1>
+    <p>Thank you for your purchase. The licence is in an account for the address you paid with. Confirm the address to open it:</p>
+    <p><a href="{{ .SiteURL }}/auth/callback/?token_hash={{ .TokenHash }}&amp;type=invite&amp;locale={{ $locale }}">Open my account</a></p>
+    <p>That is where you connect the extension; the licence key works too. The link works once and expires soon; after that, sign in to the site with this address.</p>
+    <p>If you didn’t buy anything on DevTab.Dev, delete this e-mail.</p>
+  </body>
+</html>
+{{- end }}

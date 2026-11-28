@@ -31,22 +31,48 @@ pub async fn enqueue(
     .await
 }
 
-/// Up to `limit` jobs due at `now`, locked for the caller's transaction and
-/// skipped by every other one.
+/// Queues a job once: none is added when a job with `dedupe_key` was ever
+/// queued (done or not). True when this one was added.
+pub async fn enqueue_once(
+    db: impl PgExecutor<'_>,
+    kind: &str,
+    payload: &Value,
+    run_at: OffsetDateTime,
+    dedupe_key: &str,
+) -> Result<bool, sqlx::Error> {
+    let added = sqlx::query!(
+        "insert into app.jobs (kind, payload, run_at, dedupe_key) values ($1, $2, $3, $4)
+         on conflict (dedupe_key) where dedupe_key is not null do nothing",
+        kind,
+        payload,
+        run_at,
+        dedupe_key,
+    )
+    .execute(db)
+    .await?;
+    Ok(added.rows_affected() == 1)
+}
+
+/// Up to `limit` jobs of the `kinds` the caller runs, due at `now`, locked
+/// for the caller's transaction and skipped by every other one. A job of
+/// another kind waits in the queue for a worker that runs it.
 pub async fn claim_due(
     db: impl PgExecutor<'_>,
     now: OffsetDateTime,
     limit: i64,
+    kinds: &[&str],
 ) -> Result<Vec<JobRow>, sqlx::Error> {
+    let kinds: Vec<String> = kinds.iter().map(|&kind| kind.to_owned()).collect();
     sqlx::query_as!(
         JobRow,
         "select id, kind, payload, run_at, attempts from app.jobs
-         where done_at is null and run_at <= $1
+         where done_at is null and run_at <= $1 and kind = any($3)
          order by run_at, id
          limit $2
          for update skip locked",
         now,
         limit,
+        &kinds,
     )
     .fetch_all(db)
     .await

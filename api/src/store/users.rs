@@ -1,6 +1,7 @@
 //! `app.users`: one row per Supabase Auth user. The e-mail address lives in
 //! `auth.users`, which the API role reads only through `app.user_email` and
-//! `app.user_id_by_email`.
+//! `app.user_id_by_email`; `app.users` keeps only its canonical inbox
+//! (`email_canonical`, set by a trigger on `auth.users`).
 
 use sqlx::PgExecutor;
 use uuid::Uuid;
@@ -29,6 +30,31 @@ pub async fn id_by_email(
     sqlx::query_scalar!("select app.user_id_by_email($1) as id", email)
         .fetch_one(db)
         .await
+}
+
+/// The first user whose address reaches the inbox `canonical`
+/// (`accounts::canonical_email`), by `app.users.email_canonical`.
+pub async fn id_by_canonical_email(
+    db: impl PgExecutor<'_>,
+    canonical: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "select id from app.users where email_canonical = $1 order by created_at, id limit 1",
+        canonical,
+    )
+    .fetch_optional(db)
+    .await
+}
+
+/// The canonical inbox of the user's address (`app.users.email_canonical`).
+pub async fn canonical_of(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!("select email_canonical from app.users where id = $1", id)
+        .fetch_optional(db)
+        .await
+        .map(Option::flatten)
 }
 
 /// The user's e-mail address, through `app.user_email`.

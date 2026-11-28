@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use axum::Router;
 use clap::{Parser, Subcommand};
-use devtab_api::admin::{self, AdminCommand, KeysCommand, StripeCommand};
+use devtab_api::admin::{self, AdminCommand, KeysCommand, MailCommand, StripeCommand};
 use devtab_api::clock::SystemClock;
 use devtab_api::config::Env;
 use devtab_api::licence::signer::{self, KeyList, Signer};
@@ -94,6 +94,12 @@ fn main() -> ExitCode {
         } => run(async move {
             let config = Config::from_env()?;
             admin::stripe_check(&config, &file, &mut std::io::stdout().lock()).await
+        }),
+        Command::Admin {
+            command: AdminCommand::Mail(MailCommand::Templates { apply }),
+        } => run(async move {
+            let config = Config::from_env()?;
+            admin::mail_templates(&config, apply, &mut std::io::stdout().lock()).await
         }),
         Command::Admin { command } => run(admin_db(command)),
     }
@@ -189,6 +195,52 @@ fn stripe_payments(
     })
 }
 
+/// Supabase Auth's admin API with the project's secret key, checked before
+/// `serve` starts; none without the key, and then a checkout without an
+/// account is refused while signed-in purchases work.
+fn accounts(config: &Config) -> anyhow::Result<Option<devtab_api::accounts::Accounts>> {
+    let Some(settings) = config.accounts() else {
+        if config.guest_checkout {
+            tracing::warn!(
+                "DEVTAB_GUEST_CHECKOUT=true without DEVTAB_SUPABASE_SECRET_KEY_FILE: a checkout \
+                 without an account is refused (guest-checkout-unavailable); signed-in purchases work"
+            );
+        }
+        return Ok(None);
+    };
+    let accounts = devtab_api::accounts::Accounts::connect(&settings, &config.site_url)?;
+    tracing::info!(
+        guest_checkout = config.guest_checkout,
+        "accounts: Supabase Auth's admin API, for the buyers of guest checkouts"
+    );
+    Ok(Some(accounts))
+}
+
+/// The mail provider, its secret read before `serve` starts; none: `mail`
+/// jobs wait in the queue.
+fn mailer(config: &Config) -> anyhow::Result<Option<Arc<dyn devtab_api::mail::Mailer>>> {
+    use devtab_api::mail::MailSettings;
+    let mailer = devtab_api::mail::connect(&config.mail)?;
+    match (&config.mail, &mailer) {
+        (MailSettings::Listmonk(settings), _) => {
+            let missing = settings.missing_templates();
+            if !missing.is_empty() {
+                tracing::warn!(
+                    missing = %missing.join(","),
+                    "mail: these kinds have no listmonk template and are refused when sent \
+                     (DEVTAB_MAIL_LISTMONK_TEMPLATES)"
+                );
+            }
+        }
+        (_, None) => tracing::warn!("DEVTAB_MAIL is not set: mails wait in the queue"),
+        _ => {}
+    }
+    if let Some(mailer) = &mailer {
+        tracing::info!(provider = mailer.name(), "mail");
+    }
+    Ok(mailer)
+}
+
 /// The signing key from `DEVTAB_SIGNING_KEY_FILE`, checked against the
 /// published list: `serve` does not start with a key it may not sign with.
 fn signing_key(config: &Config, emergency: bool) -> anyhow::Result<Signer> {
@@ -269,6 +321,12 @@ async fn serve(emergency_key: bool) -> anyhow::Result<()> {
     let mut state = AppState::new(store, clock.clone(), signer, &config);
     if let Some(payments) = payments {
         state = state.with_payments(payments);
+    }
+    if let Some(accounts) = accounts(&config)? {
+        state = state.with_accounts(accounts);
+    }
+    if let Some(mailer) = mailer(&config)? {
+        state = state.with_mailer(mailer);
     }
     if let Some(auth) = config.auth() {
         let verifier = devtab_api::auth::Verifier::remote(auth.jwks_url, auth.issuer, clock)

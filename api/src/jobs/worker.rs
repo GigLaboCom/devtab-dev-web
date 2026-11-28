@@ -5,7 +5,8 @@
 //!
 //! A job that fails is tried again after 1, 5 and 30 minutes, then 2, 6 and
 //! 24 hours; then, or at once when trying again cannot help, it is given up
-//! and logged as an error (an alarm).
+//! and logged as an error (an alarm). The same holds for a mail: a provider's
+//! refusal gives it up at once, an outage retries it.
 
 use std::time::Duration as StdDuration;
 
@@ -15,12 +16,27 @@ use time::{Duration, OffsetDateTime};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::mail::{MailError, compose};
 use crate::payments::process::{self, ProcessError};
 use crate::state::AppState;
 use crate::store::{events, jobs};
 
 /// Processing a stored provider event: `{"event": <provider_events.id>}`.
 pub const PROCESS_EVENT: &str = "process_event";
+
+/// A mail of a kind to a user or a team member, in a language, with record
+/// ids (`crate::mail::queue`); run only when a mailer is configured
+/// (`DEVTAB_MAIL`), otherwise it waits in the queue.
+pub use crate::mail::queue::MAIL;
+
+/// The kinds of jobs this worker runs now; a job of any other kind waits.
+pub fn runs(state: &AppState) -> Vec<&'static str> {
+    let mut kinds = vec![PROCESS_EVENT];
+    if state.mailer.is_some() {
+        kinds.push(MAIL);
+    }
+    kinds
+}
 
 /// How often the worker looks for due jobs when nothing wakes it.
 pub const POLL: StdDuration = StdDuration::from_secs(5);
@@ -42,10 +58,15 @@ const MAX_PER_RUN: usize = 100;
 /// Runs the jobs due now, by the state's clock; how many ran.
 pub async fn run_due(state: &AppState) -> Result<usize, sqlx::Error> {
     let mut ran = 0;
+    let kinds = runs(state);
     while ran < MAX_PER_RUN {
         let now = state.clock.now();
         let mut tx = state.store.pool().begin().await?;
-        let Some(job) = jobs::claim_due(&mut *tx, now, 1).await?.into_iter().next() else {
+        let Some(job) = jobs::claim_due(&mut *tx, now, 1, &kinds)
+            .await?
+            .into_iter()
+            .next()
+        else {
             tx.rollback().await?;
             break;
         };
@@ -65,6 +86,7 @@ async fn run_one(
     let mut savepoint = conn.begin().await?;
     let result = match job.kind.as_str() {
         PROCESS_EVENT => process_event(state, &mut savepoint, &job.payload, now).await,
+        MAIL => send_mail(state, &mut savepoint, job, now).await,
         other => Err(ProcessError::Permanent(format!(
             "unknown job kind `{other}`"
         ))),
@@ -113,8 +135,48 @@ async fn process_event(
         .payments
         .as_ref()
         .ok_or_else(|| ProcessError::Retry("no payment provider is configured".to_owned()))?;
-    process::process_event(conn, &payments.stripe, id, now).await?;
+    let hooks = process::Hooks {
+        accounts: state.accounts.as_deref(),
+        schedule: &state.mail_schedule,
+    };
+    process::process_event(conn, &payments.stripe, &hooks, id, now).await?;
     Ok(())
+}
+
+/// Sends a due mail, or skips it when its reason has gone
+/// (`crate::mail::compose`). Sent at least once: a mail sent just before the
+/// transaction failed would go again at the retry.
+async fn send_mail(
+    state: &AppState,
+    conn: &mut PgConnection,
+    job: &jobs::JobRow,
+    now: OffsetDateTime,
+) -> Result<(), ProcessError> {
+    let mailer = state
+        .mailer
+        .as_ref()
+        .ok_or_else(|| ProcessError::Retry("no mailer is configured".to_owned()))?;
+    let composed = compose::compose(conn, &job.payload, &state.catalogue.site_url, now)
+        .await
+        .map_err(mail_error)?;
+    match composed {
+        compose::Composed::Skip(reason) => {
+            tracing::info!(job = job.id, reason, "mail skipped");
+            Ok(())
+        }
+        compose::Composed::Send(mail) => {
+            mailer.send(&mail).await.map_err(mail_error)?;
+            tracing::info!(job = job.id, kind = %mail.kind, locale = %mail.locale, provider = mailer.name(), "mail sent");
+            Ok(())
+        }
+    }
+}
+
+fn mail_error(err: MailError) -> ProcessError {
+    match err {
+        MailError::Retry(message) => ProcessError::Retry(message),
+        MailError::Permanent(message) => ProcessError::Permanent(message),
+    }
 }
 
 /// Runs [`run_due`] whenever the state's wake-up is notified, every

@@ -11,3 +11,5 @@ config/
 Cargo.lock
 # Written by script/gen from the API's code.
 src/lib/api/schema.gen.ts
+# Mail templates of the provider (Go templates), kept as written, like supabase/.
+mail/

@@ -75,9 +75,11 @@ enable_anonymous_sign_ins = false
 enable_manual_linking = false
 minimum_password_length = 6
 password_requirements = ""
-# No captcha and no external sign-in provider (Apple, GitHub, Google, ...):
-# every provider is off unless a section here enables it, and which ones to
-# offer is the owner's decision. No client ids or secrets belong in this file.
+# No captcha. The sign-in methods are the owner's decision (e-mail with a link
+# and a code, e-mail and password, Google); which ones a deployment offers is
+# the site's DEVTAB_SIGN_IN_METHODS. Of the external providers only Google has
+# a section here, off unless the environment turns it on; no client id or
+# secret belongs in this file.
 
 [auth.rate_limit]
 # Mails an hour. Enough for repeated sign-in tests against this local stack;
@@ -90,11 +92,14 @@ sign_in_sign_ups = 30
 token_verifications = 30
 web3 = 30
 
-# E-mail sign-in: a link or a one-time code; the mail goes to inbucket locally.
+# E-mail sign-in: a link or a one-time code, or a password; the mail goes to
+# inbucket locally. A new address is confirmed by its mail before a password
+# signs in: the same mail, with the link and the code (the confirmation
+# template below). A hosted project sets the same ("Confirm email").
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
-enable_confirmations = false
+enable_confirmations = true
 secure_password_change = false
 max_frequency = "1s"
 otp_length = 6
@@ -110,6 +115,48 @@ content_path = "./supabase/templates/sign_in.html"
 [auth.email.template.confirmation]
 subject = "{{ if eq (print .Data.locale) \"ru\" }}Вход на DevTab.Dev{{ else }}Sign in to DevTab.Dev{{ end }}"
 content_path = "./supabase/templates/sign_in.html"
+
+# A forgotten password: a link back to the site's /auth/callback/ and a code
+# for /forgot-password/, either of which leads to /reset-password/.
+[auth.email.template.recovery]
+subject = "{{ if eq (print .Data.locale) \"ru\" }}Новый пароль для DevTab.Dev{{ else }}A new password for DevTab.Dev{{ end }}"
+content_path = "./supabase/templates/recovery.html"
+
+# A purchase made without an account: the API invites the buyer's new
+# account (POST /auth/v1/invite with the project's secret key) once the
+# payment is through. The mail's button is the site's /auth/callback/ on
+# site_url with the token's hash; the callback decides where to go. Its
+# texts follow the user metadata the API sets (`locale`, `team`).
+[auth.email.template.invite]
+subject = "{{ if eq (print .Data.locale) \"ru\" }}Ваш DevTab.Dev {{ if .Data.team }}Team{{ else }}Pro{{ end }} готов{{ else }}Your DevTab.Dev {{ if .Data.team }}Team{{ else }}Pro{{ end }} is ready{{ end }}"
+content_path = "./supabase/templates/invite.html"
+
+# Who sends Auth's mails. Locally none leaves the machine: every mail goes to
+# the mail catcher, so this is off. A stack that sends real mail turns it on
+# and names its server and sender in the environment, never in this file:
+# SUPABASE_AUTH_EMAIL_SMTP_ENABLED=true, SUPABASE_AUTH_EMAIL_SMTP_HOST, _PORT,
+# _USER, _PASS, _ADMIN_EMAIL (the sender's address) and _SENDER_NAME (its
+# name). A hosted project sets the same under Authentication, SMTP.
+[auth.email.smtp]
+enabled = false
+host = "env(SUPABASE_AUTH_EMAIL_SMTP_HOST)"
+port = 587
+user = "env(SUPABASE_AUTH_EMAIL_SMTP_USER)"
+pass = "env(SUPABASE_AUTH_EMAIL_SMTP_PASS)"
+admin_email = "env(SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL)"
+sender_name = "env(SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME)"
+
+# Signing in with Google, off unless the environment turns it on:
+# SUPABASE_AUTH_EXTERNAL_GOOGLE_ENABLED=true, with the client of a Google
+# Cloud project in SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID and
+# SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET. The client's redirect URI is this
+# stack's http://127.0.0.1:54332/auth/v1/callback. A hosted project sets the
+# same under Authentication, Providers.
+[auth.external.google]
+enabled = false
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+skip_nonce_check = false
 
 [auth.sms]
 enable_signup = false

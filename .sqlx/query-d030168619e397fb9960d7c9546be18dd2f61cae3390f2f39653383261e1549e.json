@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select email_canonical from app.users where id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email_canonical",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.users",
+            "name": "email_canonical"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "d030168619e397fb9960d7c9546be18dd2f61cae3390f2f39653383261e1549e"
+}

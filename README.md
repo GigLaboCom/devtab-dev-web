@@ -75,11 +75,14 @@ does). It proves that:
   stub (`node:http`) of the API's internal listener (the plans of
   `tests/fixtures/internal-plans.json`) and of Supabase Auth, with the same
   checks of language, canonical URL, alternates, switch and policy, and no
-  script; `/pro/` shows what the catalogue says; the sign-in forms ask Supabase
-  Auth for the mail, keep `next` to the site, refuse a form from another site
-  and count attempts per address (`tests/server.test.ts`);
-- the site's code reads only public values and a rate limit from its
-  environment and never names Supabase's secret key, and neither does the
+  script; `/pro/` shows what the catalogue says; the forms of every sign-in
+  method (the mail's link and code, a password with sign-up and reset,
+  Google) ask Supabase Auth what they should, keep `next` to the site, refuse
+  a form from another site and count attempts per address, and a method that
+  is off is neither shown nor served (`tests/server.test.ts`, with more
+  servers for fewer methods);
+- the site's code reads only public values (the sign-in methods among them)
+  and a rate limit from its environment and never names Supabase's secret key, and neither does the
   build (`tests/no-secrets.test.ts`).
 
 ## Layout
@@ -96,14 +99,14 @@ src/lib/serverPages.ts    every localised page the server renders, by id: path, 
 src/lib/site.ts           the site's address
 src/lib/price.ts          a plan's price as the page shows it
 src/lib/api/client.ts     the server's calls to the API's internal listener, as the signed-in person
-src/lib/auth/             sign-in's settings, the Supabase server client, the pending address, attempts
+src/lib/auth/             sign-in's settings and methods, the Supabase server client, the pending addresses, attempts
 src/middleware.ts         reads the session on the pages that need it
 src/env.d.ts              what the middleware gives a page (`locals.auth`)
 src/lib/api/schema.gen.ts the internal API's types, written by script/gen
 src/layouts/              <html lang>, title, canonical URL, alternates
-src/components/           the header and the language switch
-src/pages/[...locale]/    the localised pages; pro/ and sign-in are rendered by the server
-src/pages/auth/           the sign-in forms' endpoints: sign-in, callback, signout
+src/components/           the header, the language and theme switches; auth/: the sign-in pages' card, Google link
+src/pages/[...locale]/    the localised pages; pro/ and the sign-in pages are rendered by the server
+src/pages/auth/           the sign-in endpoints: sign-in (mail), password, google, callback, signout
 src/pages/                404, robots.txt, sitemap.xml
 src/styles/tokens.css     the design tokens (placeholders)
 tests/                    node:test, from the sources and from the build (dist/client/)
@@ -132,9 +135,12 @@ tests/                    node:test, from the sources and from the build (dist/c
 
 ### Texts awaiting the owner
 
-The texts of the pages the server renders (`pages.pro`, `pages.signIn`) and
-of the sign-in mail (`supabase/templates/sign_in.html`, and its subject in
-`supabase/config.toml`) are not the owner's yet: they are the specifications' words where those give any,
+The texts of the pages the server renders (`pages.pro`, `pages.signIn`,
+`pages.signUp`, `pages.forgotPassword`, `pages.resetPassword`,
+`pages.checkout`, `pages.thanks`, `pages.trial`), of the API's mails
+(`mail/listmonk/`) and of Auth's mails
+(`supabase/templates/sign_in.html`, `recovery.html` and `invite.html`, and their
+subjects in `supabase/config.toml`) are not the owner's yet: they are the specifications' words where those give any,
 otherwise the shortest factual text, and the English catalogue says so. They
 stay together under their page's key, so that the owner approves or replaces
 them in one place. No marketing copy and no claim about the product beyond
@@ -202,16 +208,68 @@ the page depends on the visitor, so it carries `Cache-Control: public,
 max-age=300`; when the API cannot be reached it answers 503 with
 `no-store`. With the repository's catalogue no plan is available, so every
 paid plan says "Soon"; the fake provider's XTS prices show only in `dev`.
-The checkout itself is not built yet (it waits for the payment provider), so
-an available plan's link would lead to the 404.
+
+### The free trial
+
+Where the deployment offers a trial (`trialDays` of `GET /internal/plans`;
+the API's `DEVTAB_TRIAL_DAYS`), `/pro/` says how many days it lasts and
+links to `/pro/trial/`. Signed out, that page links to signing in and back
+(a trial belongs to an account, one per inbox); signed in, one form starts
+it, posting to the page itself (origin checked, counted with the sign-in
+attempts), and the answer shows its end, its key once and the step to
+connect the extension. Without a trial the page says none is offered.
+
+### Buying
+
+`/pro/checkout/?plan=<id>` buys a plan that is on sale, with or without an
+account. Signed in, one form buys for the account. Signed out, where the
+deployment sells without an account (`DEVTAB_GUEST_CHECKOUT=true`, on the
+site and on the API), a form buys without one, next to a link to sign in
+first and come back; without the setting, only that link (and the guest form
+answers 404). A team plan asks for its size (from its smallest team to
+1000; the provider's page lets the buyer change it). The form posts to the
+page itself (Astro's origin check and the `Origin` again, counted with the
+sign-in attempts of the client address, `DEVTAB_RATE_SIGN_IN_PER_IP`), and
+the API starts the checkout ("The purchase", below). The answer is the same
+page saying "on to the payment", which moves on to the provider's page by a
+`<meta http-equiv="refresh">` and a link: a form's redirect to another host
+would need that host in the policy's `form-action`, which names no other
+host. The site shows only the provider's hosted page; the embedded form
+would need Stripe.js.
+
+A guest checkout's answer carries a secret, which the site keeps in an
+`HttpOnly`, `SameSite=Lax` cookie of that browser (`devtab-checkout`, a day,
+with the checkout's id), never in an address or a page.
+
+`/pro/thanks/?ref=<checkout>` is where the provider returns the buyer. It
+asks the API as the signed-in person when the checkout is theirs, otherwise
+as the browser holding the guest checkout's secret, and shows: "being
+confirmed" until the provider's event has been processed (reloading asks
+again); the key the first time anyone asks, this browser or the account,
+then its last four characters; for the account's owner, the step to connect
+the extension (`/pro/connect/`); for a guest, either "check your mail to
+open your account" (a new account was invited) or "sign in with the address
+you paid with" (the address had one). Both pages are personal: never cached,
+never indexed.
 
 ### Signing in
 
 `/sign-in/` (and `/ru/sign-in/`) signs a person in to an account of the site,
-which Supabase Auth keeps, by e-mail only: no other way is offered until the
-owner chooses one, and no captcha. It works without client-side JavaScript:
-plain forms post to `/auth/sign-in/`, which calls Supabase Auth from the
-server and answers 303.
+which Supabase Auth keeps. The methods are the owner's choice; which of
+them a deployment offers is its setting, `DEVTAB_SIGN_IN_METHODS`
+(comma-separated; unset: `email`):
+
+| Method     | What the person does                                                      | Pages and endpoints                                                                       |
+| ---------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `email`    | gets a mail with a sign-in link and a one-time code                       | `/sign-in/`; `POST /auth/sign-in/`                                                        |
+| `password` | signs in with an address and a password; signs up; resets a lost password | `/sign-in/`, `/sign-up/`, `/forgot-password/`, `/reset-password/`; `POST /auth/password/` |
+| `google`   | continues with a Google account                                           | a link on `/sign-in/` and `/sign-up/`; `GET /auth/google/`                                |
+
+A method left out is not shown, and its pages and endpoints answer 404; with
+none that the site knows, the page says that sign-in is not available. No
+captcha. Everything works without client-side JavaScript: plain forms post
+to the endpoints, which call Supabase Auth from the server and answer 303,
+an error coming back as `?error=<code>`, which the page words.
 
 1. The e-mail form: Supabase Auth sends one mail
    (`supabase/templates/sign_in.html`) with a link and a one-time code. The
@@ -221,7 +279,38 @@ server and answers 303.
    that browser) and comes back to `/auth/callback/`, which exchanges its code
    for the session; opened elsewhere it comes back with "enter the code
    instead". The code works anywhere: the code form checks it.
-3. The session lives in cookies that `@supabase/ssr` manages, `HttpOnly` and
+3. A password: signing up asks Supabase Auth for the account, which sends
+   the same mail to confirm the address (its link back to `/auth/callback/`,
+   its code on the sign-in page, as above); until then the password does not
+   sign in. A forgotten password: `/forgot-password/` sends a reset mail
+   (`supabase/templates/recovery.html`) with a link back to
+   `/auth/callback/?via=recovery` and a code that page takes (its address
+   waits in `devtab-reset-address`). Either one starts a session and marks
+   it, by its id, in `devtab-reset` (an hour): only that session may set the
+   new password on `/reset-password/`; any other sees "ask for a new
+   e-mail". Passwords are checked by Supabase Auth (its length and
+   character rules); the site asks for the new one twice and never logs it.
+4. The invite of a purchase made without an account
+   (`supabase/templates/invite.html`, "Buying" above, "The purchase" below)
+   links to `/auth/callback/?token_hash=…&type=invite` on the project's Site
+   URL. The callback verifies the hash (`verifyOtp`, no PKCE: the API asked
+   for the invite, not this browser), which confirms the address and starts
+   the session, and then decides where to go from the account's metadata:
+   the purchase's `/pro/thanks/`, in the purchase's language. The link names
+   no landing. The invited person has no password: where the deployment
+   offers passwords, the thanks page offers setting one, in the session the
+   invite started (the `devtab-reset` mark, as after a reset mail), and
+   nothing asks for it. A used or expired link comes back to the sign-in
+   page with `?error=invite`.
+5. Google: a link (not a form: the policy's `form-action 'self'` would stop a
+   form's redirect to Google) to `/auth/google/`, which asks Supabase Auth
+   for the provider's address with a PKCE verifier in a cookie and answers
+   303 there; Google comes back through Supabase Auth to
+   `/auth/callback/?via=google`, with the page's language and `next`. It
+   starts only from the site's own pages (`Sec-Fetch-Site`). No script, font
+   or image comes from Google: the button is text and an outline of the
+   letter.
+6. The session lives in cookies that `@supabase/ssr` manages, `HttpOnly` and
    `SameSite=Lax` (no script reads them). `src/middleware.ts` reads it only
    on the pages that need it (those of `serverPages` marked `session`, and
    `/auth/*`), verifying the token with `getClaims()` against the project's
@@ -229,16 +318,54 @@ server and answers 303.
    session cookie is set on a response a cache may keep. A page reads the
    person as `locals.auth`, and `src/lib/api/client.ts` passes their access
    token to the API as `Authorization: Bearer …`.
-4. Signed in, the page shows who and offers signing out
+7. Signed in, the page shows who and offers signing out
    (`POST /auth/signout/`). `?next=<path of this site>` sends a signed-in
-   person there, and the forms carry it through the sign-in; anything but a
-   path of this site is dropped. The account's own page comes later.
+   person there, and the forms and links carry it through every method;
+   anything but a path of this site is dropped. The account's own page comes
+   later.
 
 Astro's origin check refuses a form posted from another site. Each client
-address may try 10 times an hour (`DEVTAB_RATE_SIGN_IN_PER_IP`, counted in
-the server's memory, before Supabase Auth's own limits). The pages are never
-cached and never indexed. The site holds no secret: only the project's
-address and its publishable key, which anyone may see.
+address may try 10 times an hour, all methods together
+(`DEVTAB_RATE_SIGN_IN_PER_IP`, counted in the server's memory, before
+Supabase Auth's own limits). The pages are never cached and never indexed.
+The site holds no secret: only the project's address and its publishable
+key, which anyone may see.
+
+#### What a deployment sets in Supabase
+
+The site only chooses among the methods; Supabase Auth must allow the ones
+it offers. Locally `supabase/config.toml` does; a hosted project sets the
+same in its dashboard (Authentication), and nothing of it is in the site's
+environment:
+
+- **Redirect URLs**: the site's `https://<site>/auth/callback/**`, so that
+  the mails' links and Google come back to it.
+- **E-mail** (`email`, `password`): sign-ups on, "Confirm email" on (a
+  password signs in only once its address is confirmed), the code's length
+  6, and the four mail templates of `supabase/templates/` (magic link and
+  confirmation: `sign_in.html`; reset password: `recovery.html`; invite user:
+  `invite.html`) with their subjects. The Site URL is the site's address: the
+  invite mail's button is built on it.
+- **Buying without an account** (`DEVTAB_GUEST_CHECKOUT=true`): the API holds
+  the project's secret key (`sb_secret_…`, or the legacy `service_role` key)
+  in a file (`DEVTAB_SUPABASE_SECRET_KEY_FILE`), with which it invites the
+  buyers who have no account. The site never holds it.
+- **Sender**: Auth's mails go out through the project's SMTP server, which
+  says who sends them, its address and name: locally `[auth.email.smtp]`,
+  off (every mail goes to the mail catcher) unless
+  `SUPABASE_AUTH_EMAIL_SMTP_ENABLED=true` and the server's
+  `SUPABASE_AUTH_EMAIL_SMTP_HOST`, `_PORT`, `_USER`, `_PASS`, the sender's
+  address `_ADMIN_EMAIL` (for example `no-reply@example.invalid`) and name
+  `_SENDER_NAME` are in the environment; hosted, Authentication, SMTP.
+- **Google** (`google`): the Google provider on, with the client id and
+  secret of an OAuth client of a Google Cloud project, whose authorised
+  redirect URI is the project's `<Supabase URL>/auth/v1/callback`. Locally
+  `[auth.external.google]`, off unless
+  `SUPABASE_AUTH_EXTERNAL_GOOGLE_ENABLED=true`,
+  `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and
+  `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET` are in the environment of
+  `script/auth-up`; hosted, Authentication, Providers. The client id and
+  secret are never in this repository or the site's environment.
 
 ### Run it locally
 
@@ -259,16 +386,22 @@ machine. `script/site-server` then reads the stack's publishable key from
 script/auth-up                      # the stack's containers; the first start pulls two images
 script/api-dev                      # checks access tokens against the stack's JWKS
 pnpm build && script/site-server    # http://127.0.0.1:4321/sign-in/; mails at http://127.0.0.1:54334
-node script/e2e-sign-in.ts          # sign in by the code and by the link, end to end
+node script/e2e-sign-in.ts          # sign in by the code, the link and a password, end to end
 supabase --workdir . stop           # stop the stack when done: its ports are on every interface
 ```
 
+`script/site-server` offers the e-mail and passwords
+(`DEVTAB_SIGN_IN_METHODS=email,password` unless set), which the local stack
+serves on its own; Google needs a client (above).
 `script/e2e-sign-in.ts` starts and stops nothing: it posts the forms, reads
 the mail from Mailpit, signs in by its code, checks that the API accepts the
 session's access token (and refuses none or a forged one), signs out, then
 signs in by the link in the same browser and shows that the link fails in
-another. It prints tokens and codes masked and leaves its two
-`…@example.invalid` accounts in the local database.
+another. When the site offers passwords it then signs up with one, confirms
+the address by the mail's code, signs in with the password, and resets it
+by the code and by the link of a reset mail. It prints tokens and codes
+masked and leaves its three `…@example.invalid` accounts in the local
+database.
 
 ### The site's configuration
 
@@ -281,7 +414,9 @@ The server reads it when it runs; every value is public.
 | `DEVTAB_SUPABASE_URL`             | none                    | the Supabase project, as the browser reaches it; with the key  |
 | `DEVTAB_SUPABASE_PUBLISHABLE_KEY` | none                    | its publishable key; without both, sign-in is off              |
 | `DEVTAB_RATE_SIGN_IN_PER_IP`      | `10`                    | sign-in attempts an hour, by client address                    |
+| `DEVTAB_SIGN_IN_METHODS`          | `email`                 | the sign-in methods offered: `email`, `password`, `google`     |
 | `DEVTAB_EXTENSION_IDS`            | none                    | the extension builds `/pro/connect/` talks to, comma-separated |
+| `DEVTAB_GUEST_CHECKOUT`           | none (off)              | `true`: anyone may buy without an account (the API's too)      |
 
 ## Content security policy
 
@@ -340,6 +475,8 @@ nobody), has a plan, a number of seats and a key; the extension activates an
 installation with the key and keeps it going with the installation's secret
 and the signed token the server returns.
 
+- **Kinds**: `subscription` (from a purchase), `complimentary` (`admin
+licence comp`), `trial` ("The trial"), `one_time` (not sold yet).
 - **Key**: `DTD-XXXX-XXXX-XXXX-XXXX-XXXX`, 100 random bits in Crockford base32,
   shown once and stored only as the SHA-256 of its canonical form (upper
   case, no spaces or hyphens, `O` read as `0`, `I` and `L` as `1`). A licence
@@ -524,14 +661,67 @@ with a missing secret, a secret key, or a key of the other mode.
 
 ### The purchase
 
-A signed-in person starts a checkout of a plan on sale (`POST
-/internal/checkouts {"plan", "locale"}`: a row in `app.checkouts`, then the
-provider's session; the answer is the provider's page or its embedded form;
-404 `plan-unknown`, 409 `plan-unavailable`, 503 `payments-unavailable`). The
-provider returns the buyer to `<DEVTAB_SITE_URL>[/<locale>]/pro/thanks/?ref=<checkout>`,
-which reads `GET /internal/checkouts/{id}`: `open`, `expired`, or `completed`
-with the key the first time it is asked for within a day, and only to the
-person who started it (anyone else gets 404); `key_hint` after that.
+A purchase is made signed in or, where the deployment allows it, without an
+account (D35 of the specifications). A signed-in person starts a checkout of
+a plan on sale (`POST /internal/checkouts {"plan", "locale", "members"}`: a
+row in `app.checkouts`, then the provider's session, naming the account's
+customer if it has one; the answer is the provider's page or its embedded
+form; 404 `plan-unknown`, 409 `plan-unavailable`, 503
+`payments-unavailable`). The provider returns the buyer to
+`<DEVTAB_SITE_URL>[/<locale>]/pro/thanks/?ref=<checkout>`, which reads
+`GET /internal/checkouts/{id}`: `open`, `expired`, or `completed` with the
+key the first time it is asked for within a day, and only to the person who
+started it (anyone else gets 404); `key_hint` after that.
+
+**Without an account** (a guest checkout; `DEVTAB_GUEST_CHECKOUT=true`):
+`POST /internal/checkouts/guest` takes the same body and starts the same
+checkout with no user and no customer, so Stripe asks the buyer for the
+address and makes a customer (a subscription checkout always does). Its
+answer adds `claim`, a secret for the browser that started it, of which the
+checkout keeps only the SHA-256; `POST /internal/checkouts/{id}/claim
+{"claim"}` answers the checkout as above, plus `account`: `invited` or
+`existing` once paid. With the setting off the route answers 403
+`guest-checkout-off`; on, but without the Supabase secret key, 503
+`guest-checkout-unavailable`; a signed-in purchase works either way. The
+site limits how often a client starts one.
+
+When a guest checkout's subscription is paid, the worker gives it a buyer
+before it issues the licence, inside the subscription's lock and the job's
+transaction:
+
+1. the address the buyer typed at Stripe, read from the Checkout Session
+   (`customer_details.email`; the restricted key's write permission on
+   Checkout Sessions reads it, no permission on Customers is needed);
+2. the account with that exact address (trimmed, lower case), through
+   `app.user_id_by_email`, the security definer function the API role
+   already has; else the first account of the same canonical inbox
+   (`app.users.email_canonical`, below);
+3. only if there is none, an invite: `POST <Supabase Auth>/invite` with the
+   project's secret key (`DEVTAB_SUPABASE_SECRET_KEY_FILE`; Auth's address is
+   `<DEVTAB_SUPABASE_URL>/auth/v1` unless `DEVTAB_SUPABASE_AUTH_URL` names
+   another), the address as typed, user metadata `{locale, app: "devtab",
+source: "purchase", checkout, team}` and `redirect_to` the site's
+   callback. Auth creates the user (the trigger makes its `app.users` row)
+   and sends `supabase/templates/invite.html`.
+
+Supabase Auth invites an unconfirmed address again each time it is asked, so
+the lookups always come first, under an advisory lock on the inbox: a job
+tried again after a failure (Auth down, an answer lost) finds the user the
+first attempt made and invites nobody twice. The licence, the checkout
+(`user_id`, `buyer`) and the customer then belong to that user, and so does
+a team. A buyer who had an account gets no invite but a `licence-added`
+mail; every other buyer gets the `welcome` mail ("Mail", below). A guest purchase cannot name the
+account's customer, so a person may be the provider's customer more than
+once. Without the secret key, a paid guest checkout waits (its job retries).
+
+**One inbox, many spellings.** The trial without a card is once per inbox
+("The trial", below), so the API knows each user's canonical inbox:
+`app.canonical_email` (and `accounts::canonical_email` in the API, held to it
+by a test) trims and lower-cases the address, drops a `+tag` on every domain,
+and on gmail.com and googlemail.com drops the dots and makes the domain
+gmail.com. A trigger on `auth.users` keeps `app.users.email_canonical`; the
+account's own address stays as the person typed it, since they sign in with
+it and mail goes to it.
 
 Nothing changes a licence but a verified event. The queue's worker
 (`api/src/jobs/worker.rs`) runs `process_event` (`api/src/payments/process.rs`):
@@ -557,9 +747,83 @@ Each subscription is handled under a transaction-scoped advisory lock, so two
 events of one purchase processed at once issue one licence. A failed job is
 tried again after 1, 5 and 30 minutes, 2, 6 and 24 hours, then given up and
 logged as an error with its event marked `failed`; an error that retrying
-cannot help is given up at once. Still to come: the mail with the key, the
-site's purchase and return pages, the daily reconciliations, changing plans
-and the customer portal.
+cannot help is given up at once. A purchase ends the buyer's running trial.
+Still to come: the daily reconciliations, changing plans and the customer
+portal.
+
+### The trial
+
+A trial without a card (D36): where `DEVTAB_TRIAL_DAYS` is set (7 to 14;
+`serve` refuses any other value), a signed-in person starts one with
+`POST /internal/trials {"locale"}` and gets its key once; `GET
+/internal/plans` gives `trialDays` (null without a trial), and the site's
+`/pro/trial/` starts it. Signed in only, so the address is confirmed.
+
+- It is an ordinary licence of kind `trial`: the seats of
+  `DEVTAB_TRIAL_PLAN`, a key, and its end in `paid_until`. The token reads it
+  like a complimentary licence with an end (`paid` is the end, no `term`, so
+  no payment grace; `renews: false`), so the extension activates, refreshes
+  and expires it as any licence: past its end the token says `ended`,
+  activation answers `licence-inactive`, connecting from the account skips
+  it.
+- Once per canonical inbox: `app.trial_inboxes` keeps the SHA-256 of
+  `app.users.email_canonical` (never the address) and outlives the account,
+  so another spelling of the same inbox, or a new account after deleting the
+  old one, gets 409 `trial-used`. Someone who ever had a paid licence gets 409
+  `trial-not-eligible`. Off: 403 `trial-off`.
+- A purchase ends a running trial (its installations' next check says
+  `ended`, and connecting from the account picks the paid licence).
+- Its mails: `trial-started` at once, `trial-ending` the days of
+  `DEVTAB_MAIL_TRIAL_REMIND_DAYS` before its end (3 and 1), `trial-ended` at
+  its end; each is skipped if the trial is over or replaced by then.
+
+### Mail
+
+The API's own mails go through one interface (`api/src/mail/`, D37): a mail
+of a kind, to an address, in a language, with the data its template needs.
+Supabase Auth's mails (sign-in, password reset, the invite) stay Supabase's.
+
+- **Queued, never sent inline.** What happens queues a `mail` job
+  (`mail::queue`): the kind, the user or team member it goes to by id (never
+  an address), the language and record ids, due when it should go, with a
+  key that makes it once only (one mail per licence, kind and period, however
+  many events ask).
+- **Checked when due.** The worker reads the state again (`mail::compose`):
+  a mail whose reason has gone is skipped (no trial reminder after a
+  purchase, no "payment failed" once paid, no renewal reminder for a moved
+  period or a cancelled subscription), the address is read now, and the data
+  are built (`site_url`, `plans_url`, `connect_url`, `sign_in_url`,
+  `plan_name` in the mail's language, `key_hint`, `members`, `ends_on`,
+  `days_left`). A provider's refusal gives the mail up at once; an outage
+  retries it on the queue's schedule.
+- **The kinds.** `trial-started`, `trial-ending`, `trial-ended` ("The
+  trial"); `welcome` after a paid licence and `licence-added` for a guest
+  buyer whose address had an account; `renewal-reminder`
+  `DEVTAB_MAIL_RENEWAL_REMIND_DAYS` (7) before a yearly renewal;
+  `payment-failed`, `subscription-cancelled` and `subscription-ended` when a
+  subscription becomes overdue, stops renewing or ends; `team-invite` when an
+  owner invites an address.
+- **Providers**, chosen by `DEVTAB_MAIL`: unset or `none`, mail jobs wait in
+  the queue and nothing else changes; `log` logs them (kind and language,
+  never the address; refused in `prod`); `listmonk` sends them through
+  listmonk's transactional API (`POST /api/tx`) with the template id of each
+  kind and language (`DEVTAB_MAIL_LISTMONK_TEMPLATES`), HTTP basic auth with
+  an API user and its token (a file), and the sender `DEVTAB_MAIL_FROM`. A
+  kind without a template is refused when it is sent, and `serve` warns of
+  the missing ones at start.
+- **Who receives a listmonk mail.** listmonk's default mode sends only to
+  its subscribers. With `DEVTAB_MAIL_LISTMONK_LIST_ID` the recipient first
+  joins that (private) list, preconfirmed, and an existing subscriber is left
+  as it is; without it the mail goes in `external` mode, which needs no
+  subscriber but a listmonk that knows the mode (v6.2.0 does; v5.1.0 ignores
+  it and refuses the address). Templates read only `{{ .Tx.Data.* }}`.
+- **Templates.** `mail/listmonk/` holds a skeleton of every kind in English
+  and Russian (`<kind>.<locale>.html`, subjects in `templates.toml`), whose
+  texts await the owner, built into the binary. `devtab-api admin mail
+templates` says what it would create or update in the instance;
+  `--apply` creates or updates them by name (`DevTab.Dev: <kind>
+(<locale>)`) and prints `DEVTAB_MAIL_LISTMONK_TEMPLATES=…` for the deploy
+  configuration.
 
 ### Connecting the extension
 
@@ -731,10 +995,11 @@ CLI's well-known default: keep the machine's firewall on.
 
 `script/db-up` starts Postgres alone, which is all the API's checks need.
 `script/auth-up` adds what sign-in needs: Auth, the gateway and the mail
-catcher (not Studio, the Data API or the other services). Auth allows e-mail
-sign-in only, by link or one-time code, with its mail
-`supabase/templates/sign_in.html`; no external provider and no captcha are
-configured. It signs access tokens with an ES256 key of this machine:
+catcher (not Studio, the Data API or the other services). Auth allows
+e-mail sign-in by link or one-time code and by password (a new address
+confirmed by its mail first), with its mails `supabase/templates/sign_in.html`
+and `recovery.html`; Google is configured but off unless the environment
+turns it on (above, "What a deployment sets in Supabase"); no captcha. It signs access tokens with an ES256 key of this machine:
 `supabase/config.toml` names `.state/supabase/signing-keys.json`, which
 `script/lib/supabase.sh` makes on first use (`supabase gen signing-key`,
 mode 600; the CLI refuses to start without the file) and which is never
@@ -769,6 +1034,7 @@ transaction; keys are printed once and never stored.
 | `keys generate --kid <p1, p2, …> --out <file>`, `keys generate --test --out …` | An ES256 key pair: the private key into a new file, the public entry printed (`--list-out <file>`: also as a key list) |
 | `keys check`                                                                   | The server's key against the trusted keys, as `serve` checks it                                                        |
 | `stripe check [--file config/plans.toml]`                                      | Stripe's settings and secrets as `serve` checks them; every Stripe price of the file found at Stripe; changes nothing  |
+| `mail templates [--apply]`                                                     | The listmonk templates of every mail: what it would do; `--apply` creates or updates them and prints their ids         |
 
 `devtab-api openapi` prints the internal listener's OpenAPI document (what
 `script/gen` writes); it needs neither the database nor any setting.
@@ -803,7 +1069,11 @@ the Data API's roles. So far:
 the schema and the API role; `app.users` with its trigger on `auth.users` and
 the two lookups by e-mail address; `app.plans`; licences, installations,
 customers, the job queue and the admin record; the plans' texts and prices and
-`app.settings` (the catalogue's version).
+`app.settings` (the catalogue's version); purchases, provider events and keys
+to reveal; team plans and members; guest checkouts (no user until paid, the
+browser's secret's hash, the buyer) and each user's canonical inbox; the
+mail jobs' keys, licences' languages and team members' ids; trials and the
+inboxes that had one.
 
 ### Configuration
 
@@ -849,6 +1119,20 @@ customers, the job queue and the admin record; the plans' texts and prices and
 | `DEVTAB_PLANS_MAX_AGE`                    | `86400`                                              | `maxAge` of `GET /v1/plans`, 3600 to 604800 seconds                   |
 | `DEVTAB_SUPABASE_URL`                     | none in `dev`; required otherwise                    | the project (`script/api-dev`: http://127.0.0.1:54332): JWKS          |
 | `DEVTAB_JWT_ISSUER`                       | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | the access tokens' `iss`                                              |
+| `DEVTAB_GUEST_CHECKOUT`                   | `false`                                              | `true`: a checkout may start without an account                       |
+| `DEVTAB_SUPABASE_SECRET_KEY_FILE`         | none: guest checkouts refused without it             | the file of the project's secret key (`sb_secret_…`): invites buyers  |
+| `DEVTAB_SUPABASE_AUTH_URL`                | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | Supabase Auth as the API reaches it, ending in `/auth/v1`             |
+| `DEVTAB_TRIAL_DAYS`                       | none: no trial                                       | 7 to 14: the trial without a card; any other value is refused         |
+| `DEVTAB_TRIAL_PLAN`                       | none: required with the days                         | the plan whose seats a trial gives                                    |
+| `DEVTAB_MAIL`                             | `none`: mail jobs wait                               | `none`, `log` (not in `prod`) or `listmonk`                           |
+| `DEVTAB_MAIL_FROM`                        | the provider's default                               | the sender, `Name <address>`                                          |
+| `DEVTAB_MAIL_LISTMONK_URL`                | none: required with `listmonk`                       | `https://<host>[:port]`; `http` to the loopback address in `dev` only |
+| `DEVTAB_MAIL_LISTMONK_API_USER`           | none: required with `listmonk`                       | the API user                                                          |
+| `DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE`     | none: required with `listmonk`                       | the file of its token                                                 |
+| `DEVTAB_MAIL_LISTMONK_TEMPLATES`          | none: every mail refused                             | `<kind>.<locale>=<id>,…`, as `admin mail templates --apply` prints    |
+| `DEVTAB_MAIL_LISTMONK_LIST_ID`            | none: `external` mode                                | the list recipients join first                                        |
+| `DEVTAB_MAIL_TRIAL_REMIND_DAYS`           | `3,1`                                                | days before a trial's end, each fewer than the trial's days           |
+| `DEVTAB_MAIL_RENEWAL_REMIND_DAYS`         | `7`                                                  | days before a yearly renewal, 1 to 60                                 |
 
 Logs are compact lines in `dev` and JSON lines in `staging` and `prod`. They
 carry a licence id and the first four characters of an installation id;
@@ -870,6 +1154,9 @@ api/src/http/             routers, middleware, the error shape, /v1/*, the plans
 api/src/licence/          keys, secrets, the token and its signing, activation, refresh, seats
 api/src/plans/            the plans file, its sync, currencies, the catalogue the endpoints answer
 api/src/auth/             signed-in people: access tokens against the JWKS, the CurrentUser extractor
+api/src/accounts.rs       Supabase Auth's admin API (inviting a guest purchase's buyer), the canonical inbox
+api/src/trial.rs          the trial without a card
+api/src/mail/             the mails: kinds, the queue, composing a due mail, the providers (listmonk, log), templates
 api/src/payments/         the payment provider's interface, the fake provider and Stripe (settings' secrets, REST
                           client, prices, checkout, portal, webhook signatures)
 api/src/store/            the Postgres pool and the queries, a module for each of the tables
@@ -886,7 +1173,9 @@ contract/licence-v1/      the licence contract: schemas, errors, vectors, the co
 contract/plans-v1/        the plans contract: the answer's schema, server catalogues, the copied reader, its test
 contract/internal-openapi.json  the internal listener's OpenAPI document (script/gen)
 supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
-supabase/templates/       the sign-in mail (link and code, English and Russian)
+mail/listmonk/            the API's mail templates for listmonk, a skeleton of every kind in English and Russian
+supabase/templates/       Auth's mails: sign-in or confirmation, password reset (link and code), the invite of a guest
+                          purchase (English and Russian)
 supabase/migrations/      SQL migrations, forward only
 script/                   db-up, db-migrate, db-reset, auth-up, api-dev, site-server, api-check, check-all,
                           check-migrations, sqlx-prepare, contract-sync, gen, e2e-sign-in.ts; lib/supabase.sh

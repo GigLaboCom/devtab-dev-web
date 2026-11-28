@@ -1,6 +1,7 @@
 //! Typed configuration from `DEVTAB_*` environment variables, read once at
 //! startup; every problem is reported at once.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
@@ -9,11 +10,15 @@ use std::path::PathBuf;
 use time::OffsetDateTime;
 use tracing_subscriber::EnvFilter;
 
+use crate::accounts::AccountSettings;
 use crate::licence::LicenceSettings;
 use crate::licence::token::Spans;
+use crate::mail::listmonk::{ListmonkSettings, parse_templates};
+use crate::mail::{MailSchedule, MailSettings};
 use crate::payments;
 use crate::payments::stripe::{self, CheckoutUi, StripeMode, StripeSettings};
 use crate::plans::catalogue::CatalogueSettings;
+use crate::trial::TrialSettings;
 
 /// Deployment environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +115,25 @@ pub struct Config {
     pub supabase_url: Option<String>,
     /// The `iss` the access tokens carry; `<supabase_url>/auth/v1` unless set.
     pub jwt_issuer: Option<String>,
+    /// Whether anyone may start a checkout without signing in
+    /// (`DEVTAB_GUEST_CHECKOUT`); off unless set. It also needs
+    /// [`Self::supabase_secret_key_file`], without which a guest checkout is
+    /// refused.
+    pub guest_checkout: bool,
+    /// Supabase Auth as the API reaches it (`DEVTAB_SUPABASE_AUTH_URL`), for
+    /// inviting the buyers of guest checkouts; `<supabase_url>/auth/v1` unless
+    /// set.
+    pub supabase_auth_url: Option<String>,
+    /// The file of the project's secret key (`DEVTAB_SUPABASE_SECRET_KEY_FILE`),
+    /// with which the API invites the buyer of a guest checkout.
+    pub supabase_secret_key_file: Option<PathBuf>,
+    /// Who sends the mails (`DEVTAB_MAIL`); off: they wait in the queue.
+    pub mail: MailSettings,
+    /// When the reminders go out.
+    pub mail_schedule: MailSchedule,
+    /// The trial without a card (`DEVTAB_TRIAL_DAYS`, `DEVTAB_TRIAL_PLAN`);
+    /// none: no trial is offered.
+    pub trial: Option<TrialSettings>,
 }
 
 /// Where the access tokens of signed-in people are checked.
@@ -144,6 +168,12 @@ impl fmt::Debug for Config {
             .field("plans_max_age_s", &self.plans_max_age_s)
             .field("supabase_url", &self.supabase_url)
             .field("jwt_issuer", &self.jwt_issuer)
+            .field("guest_checkout", &self.guest_checkout)
+            .field("supabase_auth_url", &self.supabase_auth_url)
+            .field("supabase_secret_key_file", &self.supabase_secret_key_file)
+            .field("mail", &self.mail)
+            .field("mail_schedule", &self.mail_schedule)
+            .field("trial", &self.trial)
             .finish()
     }
 }
@@ -187,6 +217,12 @@ impl Default for Config {
             plans_max_age_s: 86_400,
             supabase_url: None,
             jwt_issuer: None,
+            guest_checkout: false,
+            supabase_auth_url: None,
+            supabase_secret_key_file: None,
+            mail: MailSettings::Off,
+            mail_schedule: MailSchedule::default(),
+            trial: None,
         }
     }
 }
@@ -294,6 +330,77 @@ fn stripe_api_url(text: &str, env: Env) -> Option<String> {
         _ => false,
     };
     ok.then(|| text.to_owned())
+}
+
+/// listmonk's settings (`DEVTAB_MAIL=listmonk`); the token stays in its file,
+/// which `serve` reads.
+fn read_listmonk(
+    env: Env,
+    get: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> Option<ListmonkSettings> {
+    let before = problems.len();
+    let url = if let Some(text) = get("DEVTAB_MAIL_LISTMONK_URL") {
+        let url = stripe_api_url(&text, env);
+        if url.is_none() {
+            problems.push(format!(
+                "DEVTAB_MAIL_LISTMONK_URL must be https://<host>[:port] with no path (http to the \
+                 loopback address in dev only), got `{text}`"
+            ));
+        }
+        url
+    } else {
+        problems.push("DEVTAB_MAIL_LISTMONK_URL is required with DEVTAB_MAIL=listmonk".to_owned());
+        None
+    };
+    let api_user = get("DEVTAB_MAIL_LISTMONK_API_USER");
+    if api_user.is_none() {
+        problems
+            .push("DEVTAB_MAIL_LISTMONK_API_USER is required with DEVTAB_MAIL=listmonk".to_owned());
+    }
+    let token_file = get("DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE").map(PathBuf::from);
+    if token_file.is_none() {
+        problems.push(
+            "DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE is required with DEVTAB_MAIL=listmonk: the file of \
+             the API user's token"
+                .to_owned(),
+        );
+    }
+    let templates = match get("DEVTAB_MAIL_LISTMONK_TEMPLATES").map(|t| parse_templates(&t)) {
+        None => BTreeMap::default(),
+        Some(Ok(map)) => map,
+        Some(Err(problem)) => {
+            problems.push(format!("DEVTAB_MAIL_LISTMONK_TEMPLATES: {problem}"));
+            BTreeMap::default()
+        }
+    };
+    let list_id = get("DEVTAB_MAIL_LISTMONK_LIST_ID").and_then(|text| {
+        let id = text.parse::<i64>().ok().filter(|id| *id > 0);
+        if id.is_none() {
+            problems.push(format!(
+                "DEVTAB_MAIL_LISTMONK_LIST_ID must be a list id, got `{text}`"
+            ));
+        }
+        id
+    });
+    let from = get("DEVTAB_MAIL_FROM");
+    if from
+        .as_ref()
+        .is_some_and(|f| f.len() > 200 || !f.contains('@') || f.chars().any(char::is_control))
+    {
+        problems.push("DEVTAB_MAIL_FROM must be an address, or `Name <address>`".to_owned());
+    }
+    if problems.len() > before {
+        return None;
+    }
+    Some(ListmonkSettings {
+        url: url?,
+        api_user: api_user?,
+        token_file: token_file?,
+        templates,
+        list_id,
+        from,
+    })
 }
 
 /// Stripe's settings (`DEVTAB_PAYMENTS=stripe`); the secrets stay in their
@@ -465,6 +572,21 @@ impl Config {
         })
     }
 
+    /// Supabase Auth's admin API, with which the buyer of a guest checkout is
+    /// invited: when the secret key's file is set and Auth's address is known.
+    pub fn accounts(&self) -> Option<AccountSettings> {
+        let secret_key_file = self.supabase_secret_key_file.clone()?;
+        let auth_url = self.supabase_auth_url.clone().or_else(|| {
+            self.supabase_url
+                .as_ref()
+                .map(|url| format!("{url}/auth/v1"))
+        })?;
+        Some(AccountSettings {
+            auth_url,
+            secret_key_file,
+        })
+    }
+
     /// What the plans' catalogue is built with.
     pub fn catalogue(&self) -> CatalogueSettings {
         CatalogueSettings {
@@ -536,6 +658,9 @@ impl Config {
         config.read_licence(&get, &mut problems);
         config.read_plans(&get, &mut problems);
         config.read_auth(&get, &mut problems);
+        config.read_accounts(&get, &mut problems);
+        config.read_mail(&get, &mut problems);
+        config.read_trial(&get, &mut problems);
 
         if let Some(filter) = get("DEVTAB_LOG") {
             match EnvFilter::try_new(&filter) {
@@ -634,6 +759,132 @@ impl Config {
                 ));
             }
         }
+    }
+
+    /// Purchases without an account: whether they are offered, and Supabase
+    /// Auth's admin API that invites their buyers. The secret key's file is
+    /// read by `serve`; without it a guest checkout is refused, and a signed-in
+    /// purchase works as before.
+    fn read_accounts(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        config.guest_checkout = flag(get, "DEVTAB_GUEST_CHECKOUT", false, problems);
+        if let Some(text) = get("DEVTAB_SUPABASE_AUTH_URL") {
+            let trimmed = text.trim_end_matches('/');
+            let base = trimmed.strip_suffix("/auth/v1").unwrap_or(trimmed);
+            match supabase_url(base, config.env) {
+                Some(url) if trimmed.ends_with("/auth/v1") => {
+                    config.supabase_auth_url = Some(format!("{url}/auth/v1"));
+                }
+                _ => problems.push(format!(
+                    "DEVTAB_SUPABASE_AUTH_URL must be Supabase Auth's address, https:// (http:// too \
+                     in dev), a host name, an optional port and /auth/v1, such as \
+                     https://project.supabase.co/auth/v1; got `{text}`"
+                )),
+            }
+        }
+        config.supabase_secret_key_file = get("DEVTAB_SUPABASE_SECRET_KEY_FILE").map(PathBuf::from);
+        if config.supabase_secret_key_file.is_some()
+            && config.supabase_url.is_none()
+            && config.supabase_auth_url.is_none()
+        {
+            problems.push(
+                "DEVTAB_SUPABASE_SECRET_KEY_FILE needs DEVTAB_SUPABASE_URL or \
+                 DEVTAB_SUPABASE_AUTH_URL: where Supabase Auth is"
+                    .to_owned(),
+            );
+        }
+    }
+
+    /// Who sends the mails, and when the reminders go out.
+    fn read_mail(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        config.mail = match get("DEVTAB_MAIL").as_deref() {
+            None | Some("none") => MailSettings::Off,
+            Some("log") if config.env == Env::Prod => {
+                problems.push(
+                    "DEVTAB_MAIL=log is refused in prod: it logs the mails instead of sending them"
+                        .to_owned(),
+                );
+                MailSettings::Off
+            }
+            Some("log") => MailSettings::Log,
+            Some("listmonk") => read_listmonk(config.env, get, problems)
+                .map_or(MailSettings::Off, MailSettings::Listmonk),
+            Some(other) => {
+                problems.push(format!(
+                    "DEVTAB_MAIL must be none, log or listmonk, got `{other}`"
+                ));
+                MailSettings::Off
+            }
+        };
+        if let Some(text) = get("DEVTAB_MAIL_TRIAL_REMIND_DAYS") {
+            let days: Option<Vec<u32>> = text
+                .split(',')
+                .map(|d| {
+                    d.trim()
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|d| (1..=13).contains(d))
+                })
+                .collect();
+            match days {
+                Some(mut days) if !days.is_empty() => {
+                    days.sort_unstable_by(|a, b| b.cmp(a));
+                    days.dedup();
+                    config.mail_schedule.trial_remind_days = days;
+                }
+                _ => problems.push(format!(
+                    "DEVTAB_MAIL_TRIAL_REMIND_DAYS must be days from 1 to 13, comma-separated, got \
+                     `{text}`"
+                )),
+            }
+        }
+        config.mail_schedule.renewal_remind_days =
+            whole(get, "DEVTAB_MAIL_RENEWAL_REMIND_DAYS", (7, 1, 60), problems);
+    }
+
+    /// The trial without a card: its length, 7 to 14 days, and its plan.
+    fn read_trial(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        let plan = get("DEVTAB_TRIAL_PLAN");
+        let Some(text) = get("DEVTAB_TRIAL_DAYS") else {
+            if plan.is_some() {
+                problems.push("DEVTAB_TRIAL_PLAN needs DEVTAB_TRIAL_DAYS".to_owned());
+            }
+            return;
+        };
+        let days = match text.parse::<u32>() {
+            Ok(days) if (7..=14).contains(&days) => days,
+            _ => {
+                problems.push(format!(
+                    "DEVTAB_TRIAL_DAYS must be a whole number of days from 7 to 14, got `{text}`"
+                ));
+                return;
+            }
+        };
+        let Some(plan) = plan.filter(|p| {
+            (1..=64).contains(&p.len())
+                && p.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        }) else {
+            problems.push(
+                "DEVTAB_TRIAL_DAYS needs DEVTAB_TRIAL_PLAN: the id of the plan a trial gives, such \
+                 as pro-monthly"
+                    .to_owned(),
+            );
+            return;
+        };
+        if let Some(late) = config
+            .mail_schedule
+            .trial_remind_days
+            .iter()
+            .find(|d| **d >= days)
+        {
+            problems.push(format!(
+                "DEVTAB_MAIL_TRIAL_REMIND_DAYS has {late}, not fewer than the trial's {days} days"
+            ));
+        }
+        config.trial = Some(TrialSettings { days, plan });
     }
 
     /// The signing key's file and id, and in `dev` the developer's own key list.
@@ -1222,6 +1473,156 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err.0.len(), 1, "{err}");
+    }
+
+    #[test]
+    fn guest_checkout_is_off_unless_set_and_invites_through_the_project_s_auth() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert!(!config.guest_checkout);
+        assert_eq!(config.accounts(), None);
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", "http://127.0.0.1:54332"),
+            ("DEVTAB_GUEST_CHECKOUT", "true"),
+        ])
+        .unwrap();
+        assert!(config.guest_checkout);
+        assert_eq!(
+            config.accounts(),
+            None,
+            "no key: guest checkouts are refused"
+        );
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", "http://127.0.0.1:54332"),
+            ("DEVTAB_SUPABASE_SECRET_KEY_FILE", "/run/secrets/supabase"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.accounts(),
+            Some(AccountSettings {
+                auth_url: "http://127.0.0.1:54332/auth/v1".to_owned(),
+                secret_key_file: "/run/secrets/supabase".into(),
+            })
+        );
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", SUPABASE),
+            ("DEVTAB_SUPABASE_AUTH_URL", "http://auth:9999/auth/v1/"),
+            ("DEVTAB_SUPABASE_SECRET_KEY_FILE", "/run/secrets/supabase"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.accounts().map(|a| a.auth_url).as_deref(),
+            Some("http://auth:9999/auth/v1")
+        );
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_GUEST_CHECKOUT", "yes"),
+            (
+                "DEVTAB_SUPABASE_AUTH_URL",
+                "https://project.example.invalid",
+            ),
+            ("DEVTAB_SUPABASE_SECRET_KEY_FILE", "/run/secrets/supabase"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 3, "{err}");
+    }
+
+    #[test]
+    fn mail_is_off_unless_set_and_listmonk_needs_its_instance() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert_eq!(config.mail, MailSettings::Off);
+        assert_eq!(config.mail_schedule, MailSchedule::default());
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_MAIL", "listmonk"),
+            ("DEVTAB_MAIL_LISTMONK_URL", "https://lm.example.invalid/"),
+            ("DEVTAB_MAIL_LISTMONK_API_USER", "devtab"),
+            (
+                "DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE",
+                "/run/secrets/listmonk",
+            ),
+            (
+                "DEVTAB_MAIL_LISTMONK_TEMPLATES",
+                "welcome.en=3,welcome.ru=4",
+            ),
+            ("DEVTAB_MAIL_LISTMONK_LIST_ID", "9"),
+            ("DEVTAB_MAIL_FROM", "DevTab.Dev <no-reply@example.invalid>"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "1, 5,3"),
+            ("DEVTAB_MAIL_RENEWAL_REMIND_DAYS", "14"),
+        ])
+        .unwrap();
+        let MailSettings::Listmonk(listmonk) = &config.mail else {
+            panic!("listmonk: {:?}", config.mail);
+        };
+        assert_eq!(listmonk.url, "https://lm.example.invalid");
+        assert_eq!(listmonk.templates.len(), 2);
+        assert_eq!(listmonk.list_id, Some(9));
+        assert_eq!(config.mail_schedule.trial_remind_days, [5, 3, 1]);
+        assert_eq!(config.mail_schedule.renewal_remind_days, 14);
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_MAIL", "listmonk"),
+            ("DEVTAB_MAIL_LISTMONK_URL", "http://lm.example.invalid"),
+            ("DEVTAB_MAIL_LISTMONK_TEMPLATES", "welcome.de=1"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "0"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 5, "{err}");
+        let err = load(&[
+            ("DEVTAB_ENV", "prod"),
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
+            ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+            ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+            ("DEVTAB_SUPABASE_URL", SUPABASE),
+            ("DEVTAB_PAYMENTS", "stripe"),
+            ("DEVTAB_PAYMENTS_ENV", "live"),
+            ("DEVTAB_PAYMENTS_API_KEY_FILE", "/run/secrets/k"),
+            ("DEVTAB_MAIL", "log"),
+        ])
+        .unwrap_err();
+        assert!(err.0.iter().any(|p| p.contains("DEVTAB_MAIL=log")), "{err}");
+    }
+
+    #[test]
+    fn a_trial_is_7_to_14_days_of_a_named_plan() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert_eq!(config.trial, None, "off unless set");
+        for days in ["7", "14"] {
+            let config = load(&[
+                ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+                ("DEVTAB_TRIAL_DAYS", days),
+                ("DEVTAB_TRIAL_PLAN", "pro-monthly"),
+            ])
+            .unwrap();
+            assert_eq!(config.trial.map(|t| t.plan), Some("pro-monthly".to_owned()));
+        }
+        for days in ["6", "15", "0", "ten"] {
+            let err = load(&[
+                ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+                ("DEVTAB_TRIAL_DAYS", days),
+                ("DEVTAB_TRIAL_PLAN", "pro-monthly"),
+            ])
+            .unwrap_err();
+            assert!(err.0[0].contains("from 7 to 14"), "{days}: {err}");
+        }
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_TRIAL_DAYS", "7"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "7,3"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 1, "no plan: {err}");
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_TRIAL_DAYS", "7"),
+            ("DEVTAB_TRIAL_PLAN", "pro-monthly"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "7,3"),
+        ])
+        .unwrap_err();
+        assert!(err.0[0].contains("not fewer than"), "{err}");
     }
 
     #[test]

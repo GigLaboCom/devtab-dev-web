@@ -1,0 +1,27 @@
+{{- /* The password reset mail of Supabase Auth (supabase/config.toml): the
+       link, which works in the browser that asked and leads to the site's
+       /reset-password/, and the one-time code, which /forgot-password/ takes
+       in any browser. Russian when the account was made on a Russian page
+       (user metadata `locale`), else English. The texts await the owner,
+       like the site's (README.md). */ -}}
+{{ if eq (print .Data.locale) "ru" -}}
+<!doctype html>
+<html lang="ru">
+  <body>
+    <h1>Новый пароль для DevTab.Dev</h1>
+    <p><a href="{{ .ConfirmationURL }}">Задать новый пароль</a></p>
+    <p>Или введите этот код на странице «Забыли пароль»: <strong>{{ .Token }}</strong></p>
+    <p>Ссылка работает в том браузере, где вы запросили письмо. Ссылка и код действуют один раз и недолго. Если вы не запрашивали новый пароль, просто удалите это письмо: старый пароль продолжает действовать.</p>
+  </body>
+</html>
+{{- else -}}
+<!doctype html>
+<html lang="en">
+  <body>
+    <h1>A new password for DevTab.Dev</h1>
+    <p><a href="{{ .ConfirmationURL }}">Set a new password</a></p>
+    <p>Or enter this code on the “Forgot your password” page: <strong>{{ .Token }}</strong></p>
+    <p>The link works in the browser where you asked for this e-mail. The link and the code work once and expire soon. If you didn’t ask for a new password, delete this e-mail: your password stays as it was.</p>
+  </body>
+</html>
+{{- end }}

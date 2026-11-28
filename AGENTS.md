@@ -131,6 +131,15 @@ any default attribution a tool adds:
   never logged; logs carry a licence id and the first four characters of an
   installation id, never a key, a secret, a token, an e-mail address or an IP
   address.
+- The API's mails go through `crate::mail` only: a queued `mail` job with
+  ids, never an address or a key, checked again when due; the provider is a
+  deployment's setting (`DEVTAB_MAIL`, listmonk first) with its secrets in
+  files. The mails' texts are templates in `mail/listmonk/` (en and ru for
+  every kind), awaiting the owner like the site's; never invent their copy.
+  Supabase Auth's own mails stay in `supabase/templates/`.
+- The trial without a card is a deployment's setting (`DEVTAB_TRIAL_DAYS`,
+  7 to 14) and an ordinary licence of kind `trial`, once per canonical inbox;
+  never a parallel path for its expiry.
 - Every change made through `devtab-api admin` writes an `app.admin_audit`
   row in the same transaction, with no personal data in it.
 - The plans' texts and prices are data, not code: `config/plans.toml`, synced
@@ -160,8 +169,12 @@ any default attribution a tool adds:
   is granted to `anon`, `authenticated` or `service_role`.
 - No command that talks to a hosted Supabase project without the owner's
   word: no `supabase login`, `supabase link`, `supabase db push`, no
-  `projects`, `secrets` or `functions deploy`. Local commands only. Which
-  sign-in providers to offer is the owner's decision; none is configured.
+  `projects`, `secrets` or `functions deploy`. Local commands only. The
+  sign-in methods are the owner's decision: a mail with a link and a code,
+  an address and a password, and Google; add no other provider without the
+  owner's word. Google's client id and secret, and the SMTP sender, are
+  Supabase's settings, read from the environment (`env(...)` and
+  `SUPABASE_AUTH_*` in `supabase/config.toml`), never written into a file.
 - The Supabase CLI runs with `SUPABASE_TELEMETRY_DISABLED=1` and
   `DO_NOT_TRACK=1` (`script/lib/supabase.sh`, CI).
 - Private keys, secrets and passwords are never in the repository, in CI or
@@ -203,8 +216,14 @@ any default attribution a tool adds:
   `tests/no-secrets.test.ts` allows (public values and a rate limit) and
   never Supabase's secret key. It reads the session only on pages marked
   `session` in `src/lib/serverPages.ts`; a cacheable page never sets a
-  cookie. Which sign-in methods to offer is the owner's decision: e-mail
-  only until then.
+  cookie. Which of the sign-in methods a deployment offers is its setting,
+  `DEVTAB_SIGN_IN_METHODS`, never a constant in the code; a method that is
+  off is not shown and its pages and endpoints answer 404.
+  Buying without an account is a deployment's setting too
+  (`DEVTAB_GUEST_CHECKOUT`, on the site and the API); only the API holds the
+  Supabase secret key that invites a guest buyer, in a file
+  (`DEVTAB_SUPABASE_SECRET_KEY_FILE`), and it never invites an address that
+  has an account (exact address first, then the canonical inbox).
 - The content security policy (`security.csp` in `astro.config.mjs`) stays
   `default-src 'self'`, `form-action 'self'`, `object-src 'none'`,
   `base-uri 'self'`; never add another host to it. No `style` attributes and

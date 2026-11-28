@@ -23,7 +23,16 @@ interface ServerPage {
 const list = {
   pro: { path: 'pro/', index: true, session: false, signIn: false, script: false },
   signIn: { path: 'sign-in/', index: false, session: true, signIn: false, script: false },
+  // The pages of the `password` sign-in method (src/lib/auth/config.ts): 404 when it is off.
+  signUp: { path: 'sign-up/', index: false, session: true, signIn: false, script: false },
+  forgotPassword: { path: 'forgot-password/', index: false, session: true, signIn: false, script: false },
+  resetPassword: { path: 'reset-password/', index: false, session: true, signIn: false, script: false },
   connect: { path: 'pro/connect/', index: false, session: true, signIn: true, script: true },
+  // Buying, with or without an account, and the return from the payment page.
+  checkout: { path: 'pro/checkout/', index: false, session: true, signIn: false, script: false },
+  thanks: { path: 'pro/thanks/', index: false, session: true, signIn: false, script: false },
+  // The trial without a card: a signed-in person starts it.
+  trial: { path: 'pro/trial/', index: false, session: true, signIn: false, script: false },
 };
 
 export type ServerPageId = keyof typeof list;

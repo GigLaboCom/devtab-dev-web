@@ -3,6 +3,7 @@
 //! the signed-in people of the site's pages, and the admin commands.
 #![forbid(unsafe_code)]
 
+pub mod accounts;
 pub mod admin;
 pub mod auth;
 pub mod clock;
@@ -10,11 +11,13 @@ pub mod config;
 pub mod http;
 pub mod jobs;
 pub mod licence;
+pub mod mail;
 pub mod payments;
 pub mod plans;
 pub mod state;
 pub mod store;
 pub mod telemetry;
+pub mod trial;
 
 use axum::Router;
 pub use config::Config;

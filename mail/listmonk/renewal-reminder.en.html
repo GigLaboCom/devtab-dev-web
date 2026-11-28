@@ -1,0 +1,10 @@
+{{- /* DevTab.Dev, renewal-reminder (en). Skeleton: the texts await the owner. Data: .Tx.Data.site_url, plans_url, connect_url, sign_in_url, plan_name, key_hint, members, ends_on, days_left (api/src/mail/compose.rs); never the subscriber's own fields, which external mode leaves empty. */ -}}
+<!doctype html>
+<html lang="en">
+  <body>
+    <h1>Your DevTab.Dev subscription renews on {{ .Tx.Data.ends_on }}</h1>
+    <p>Your yearly {{ .Tx.Data.plan_name }} subscription renews on {{ .Tx.Data.ends_on }}, and the payment provider charges the card on file.</p>
+    <p>To change or cancel it, use the subscription's page at the payment provider [awaiting the owner: the link].</p>
+    <p><small>You get this e-mail because of your DevTab.Dev account. <a href="{{ .Tx.Data.site_url }}">DevTab.Dev</a></small></p>
+  </body>
+</html>

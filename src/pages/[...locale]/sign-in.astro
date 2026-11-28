@@ -1,16 +1,25 @@
 ---
 /**
- * /sign-in/: signing in to an account of the site by e-mail, with a link or a
- * one-time code from the mail (Supabase Auth), in plain forms that post to
- * `/auth/sign-in/`: no script. Signed in, it shows who and offers signing
- * out; asked with `?next=<path of this site>`, it sends a signed-in person
- * straight there, and the forms carry it through the sign-in. Personal:
- * never cached, never indexed.
+ * /sign-in/: signing in to an account of the site (Supabase Auth), by the
+ * methods this deployment offers (`DEVTAB_SIGN_IN_METHODS`,
+ * src/lib/auth/config.ts): Google (a link to `/auth/google/`), an address
+ * and a password (a form posting to `/auth/password/`, with links to
+ * /sign-up/ and /forgot-password/), and a mail with a link and a one-time
+ * code (forms posting to `/auth/sign-in/`). No script. While a code is
+ * awaited (after the e-mail form, or a sign-up), the page asks for it.
+ * Signed in, it shows who and offers signing out; asked with
+ * `?next=<path of this site>`, it sends a signed-in person straight there,
+ * and the forms carry it through the sign-in. Personal: never cached, never
+ * indexed.
  */
+import AuthCard from '../../components/auth/AuthCard.astro';
+import GoogleLink from '../../components/auth/GoogleLink.astro';
+import OrDivider from '../../components/auth/OrDivider.astro';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { fill, localeOfParam, messages } from '../../i18n';
-import { authConfig, safeNext } from '../../lib/auth/config';
-import { PENDING_COOKIE } from '../../lib/auth/server';
+import { authConfig, enabledMethods, safeNext } from '../../lib/auth/config';
+import { PENDING_COOKIE, authHref } from '../../lib/auth/server';
+import { ui } from '../../lib/auth/ui';
 
 export const prerender = false;
 
@@ -25,8 +34,12 @@ const next = nextRaw ? safeNext(nextRaw, '') : '';
 const signedIn = Astro.locals.auth;
 if (signedIn && next) return Astro.redirect(next, 303);
 
-const configured = authConfig() !== null;
-const pending = signedIn ? undefined : Astro.cookies.get(PENDING_COOKIE)?.value;
+const methods = enabledMethods();
+const google = methods.has('google');
+const password = methods.has('password');
+const email = methods.has('email');
+const configured = authConfig() !== null && methods.size > 0;
+const pending = signedIn || (!email && !password) ? undefined : Astro.cookies.get(PENDING_COOKIE)?.value;
 const errors: Record<string, string> = {
   email: t.errorEmail,
   send: t.errorSend,
@@ -34,79 +47,141 @@ const errors: Record<string, string> = {
   link: t.errorLink,
   rate: t.errorRate,
   unavailable: t.unavailable,
+  credentials: t.errorCredentials,
+  unconfirmed: t.errorUnconfirmed,
+  failed: t.errorFailed,
+  google: t.errorGoogle,
+  invite: t.errorInvite,
 };
-const error = errors[Astro.url.searchParams.get('error') ?? ''];
-const field = 'mt-1 w-full rounded-md border border-border bg-background px-3 py-2';
-const button = 'mt-4 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground';
-const quiet = 'mt-4 text-sm text-muted-foreground underline underline-offset-4';
+const notices: Record<string, string> = { password: t.passwordChanged };
+const error = signedIn ? undefined : errors[Astro.url.searchParams.get('error') ?? ''];
+const notice = notices[Astro.url.searchParams.get('notice') ?? ''];
 ---
 
 <BaseLayout locale={locale} page="signIn">
-  <h1 class="text-4xl font-semibold tracking-tight">{t.heading}</h1>
-  {error && !signedIn && (
-    <p role="alert" class="mt-4 rounded-md border border-border px-3 py-2">
-      {error}
-    </p>
-  )}
-  {!configured && <p class="mt-4 text-lg">{t.unavailable}</p>}
-  {configured && signedIn && (
-    <>
-      <p class="mt-4 text-lg">{fill(t.signedIn, { email: signedIn.email ?? '' })}</p>
-      <form method="post" action="/auth/signout/">
-        <input type="hidden" name="locale" value={locale} />
-        <button type="submit" class={button}>
-          {t.signOut}
-        </button>
-      </form>
-    </>
-  )}
-  {configured && !signedIn && !pending && (
-    <form method="post" action="/auth/sign-in/" class="mt-6 max-w-sm">
-      <p>{t.intro}</p>
-      <input type="hidden" name="step" value="email" />
-      <input type="hidden" name="locale" value={locale} />
-      {next && <input type="hidden" name="next" value={next} />}
-      <label for="email" class="mt-4 block text-sm font-medium">
-        {t.emailLabel}
-      </label>
-      <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" class={field} />
-      <button type="submit" class={button}>
-        {t.send}
-      </button>
-    </form>
-  )}
-  {configured && !signedIn && pending && (
-    <div class="mt-6 max-w-sm">
-      <p>{fill(t.sent, { email: pending })}</p>
-      <p class="mt-2 text-muted-foreground">{t.sentNote}</p>
-      <form method="post" action="/auth/sign-in/">
-        <input type="hidden" name="step" value="code" />
-        <input type="hidden" name="locale" value={locale} />
-        {next && <input type="hidden" name="next" value={next} />}
-        <label for="code" class="mt-4 block text-sm font-medium">
-          {t.codeLabel}
-        </label>
-        <input
-          id="code"
-          name="code"
-          inputmode="numeric"
-          autocomplete="one-time-code"
-          pattern="[0-9 ]{6,12}"
-          required
-          class={field}
-        />
-        <button type="submit" class={button}>
-          {t.verify}
-        </button>
-      </form>
-      <form method="post" action="/auth/sign-in/">
-        <input type="hidden" name="step" value="reset" />
-        <input type="hidden" name="locale" value={locale} />
-        {next && <input type="hidden" name="next" value={next} />}
-        <button type="submit" class={quiet}>
-          {t.otherAddress}
-        </button>
-      </form>
-    </div>
-  )}
+  <AuthCard heading={t.heading} error={error} notice={notice}>
+    {!configured && <p>{t.unavailable}</p>}
+    {configured && signedIn && (
+      <>
+        <p>{fill(t.signedIn, { email: signedIn.email ?? '' })}</p>
+        <form method="post" action="/auth/signout/">
+          <input type="hidden" name="locale" value={locale} />
+          <button type="submit" class={ui.primary}>
+            {t.signOut}
+          </button>
+        </form>
+      </>
+    )}
+    {configured && !signedIn && pending && (
+      <>
+        <p>{fill(t.sent, { email: pending })}</p>
+        <p class={`mt-2 ${ui.note}`}>{t.sentNote}</p>
+        <form method="post" action="/auth/sign-in/" class="mt-5">
+          <input type="hidden" name="step" value="code" />
+          <input type="hidden" name="locale" value={locale} />
+          {next && <input type="hidden" name="next" value={next} />}
+          <label for="code" class={ui.label}>
+            {t.codeLabel}
+          </label>
+          <input
+            id="code"
+            name="code"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            pattern="[0-9 ]{6,12}"
+            required
+            class={ui.field}
+          />
+          <button type="submit" class={ui.primary}>
+            {t.verify}
+          </button>
+        </form>
+        <form method="post" action="/auth/sign-in/" class="mt-4 text-center">
+          <input type="hidden" name="step" value="reset" />
+          <input type="hidden" name="locale" value={locale} />
+          {next && <input type="hidden" name="next" value={next} />}
+          <button type="submit" class={ui.quiet}>
+            {t.otherAddress}
+          </button>
+        </form>
+      </>
+    )}
+    {configured && !signedIn && !pending && (
+      <>
+        {google && <GoogleLink locale={locale} next={next} label={t.google} />}
+        {google && (password || email) && <OrDivider label={t.or} />}
+        {password && (
+          <form method="post" action="/auth/password/">
+            <input type="hidden" name="step" value="sign-in" />
+            <input type="hidden" name="locale" value={locale} />
+            {next && <input type="hidden" name="next" value={next} />}
+            <label for="password-email" class={ui.label}>
+              {t.emailLabel}
+            </label>
+            <input
+              id="password-email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              required
+              maxlength="254"
+              class={ui.field}
+            />
+            <div class="mt-4 flex items-baseline justify-between gap-4">
+              <label for="password" class={ui.label}>
+                {t.passwordLabel}
+              </label>
+              <a href={authHref(locale, 'forgotPassword', next)} class={`text-sm ${ui.link}`}>
+                {t.forgot}
+              </a>
+            </div>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              required
+              maxlength="72"
+              class={ui.field}
+            />
+            <button type="submit" class={ui.primary}>
+              {t.signInPassword}
+            </button>
+          </form>
+        )}
+        {password && email && <OrDivider label={t.or} />}
+        {email && (
+          <form method="post" action="/auth/sign-in/">
+            <p class={ui.note}>{t.intro}</p>
+            <input type="hidden" name="step" value="email" />
+            <input type="hidden" name="locale" value={locale} />
+            {next && <input type="hidden" name="next" value={next} />}
+            <label for="email" class={`mt-4 ${ui.label}`}>
+              {t.emailLabel}
+            </label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              required
+              maxlength="254"
+              class={ui.field}
+            />
+            <button type="submit" class={password ? ui.alternative : ui.primary}>
+              {t.send}
+            </button>
+          </form>
+        )}
+      </>
+    )}
+    {configured && !signedIn && !pending && password && (
+      <p slot="after" class={`mt-6 text-center ${ui.note}`}>
+        {t.noAccount}{' '}
+        <a href={authHref(locale, 'signUp', next)} class={ui.link}>
+          {t.signUp}
+        </a>
+      </p>
+    )}
+  </AuthCard>
 </BaseLayout>

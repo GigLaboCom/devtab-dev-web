@@ -182,7 +182,7 @@ async fn set_updated_at_exists_and_only_the_api_role_may_run_it() {
 }
 
 /// Every table the migrations create in `app`.
-const TABLES: [&str; 14] = [
+const TABLES: [&str; 15] = [
     "admin_audit",
     "checkouts",
     "customers",
@@ -196,6 +196,7 @@ const TABLES: [&str; 14] = [
     "plans",
     "provider_events",
     "settings",
+    "trial_inboxes",
     "users",
 ];
 
@@ -585,13 +586,22 @@ async fn the_store_queries_work_as_the_api_role() {
     let job = jobs::enqueue(&mut *tx, "test", &json!({ "licence": id }), now)
         .await
         .unwrap();
-    let due = jobs::claim_due(&mut *tx, now, 100).await.unwrap();
+    let due = jobs::claim_due(&mut *tx, now, 100, &["test"])
+        .await
+        .unwrap();
     assert!(due.iter().any(|j| j.id == job));
+    let others = jobs::claim_due(&mut *tx, now, 100, &["other"])
+        .await
+        .unwrap();
+    assert!(
+        !others.iter().any(|j| j.id == job),
+        "a kind the caller does not run waits"
+    );
     jobs::fail(&mut *tx, job, "test failure", now + Duration::minutes(5))
         .await
         .unwrap();
     assert!(
-        !jobs::claim_due(&mut *tx, now, 100)
+        !jobs::claim_due(&mut *tx, now, 100, &["test"])
             .await
             .unwrap()
             .iter()
@@ -599,7 +609,7 @@ async fn the_store_queries_work_as_the_api_role() {
     );
     jobs::complete(&mut *tx, job, now).await.unwrap();
     assert!(
-        !jobs::claim_due(&mut *tx, now + Duration::hours(1), 100)
+        !jobs::claim_due(&mut *tx, now + Duration::hours(1), 100, &["test"])
             .await
             .unwrap()
             .iter()
@@ -618,6 +628,61 @@ async fn the_store_queries_work_as_the_api_role() {
     .unwrap();
     let recent = audit::of_licence(&mut *tx, id, 5).await.unwrap();
     assert_eq!(recent[0].id, entry);
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_canonical_inbox_is_the_api_s_rule_and_follows_the_account_s_address() {
+    let Some(mut conn) = connect().await else {
+        return;
+    };
+    let mut tx = conn.begin().await.unwrap();
+    for spelling in [
+        " First.Last+Trial2@GMail.com ",
+        "f.i.r.s.t@googlemail.com",
+        "first.last+tag@example.invalid",
+        "+only@example.invalid",
+        "a+b+c@example.invalid",
+        "odd@name@gmail.com",
+        "no-at-all",
+        "",
+    ] {
+        let sql: Option<String> = sqlx::query_scalar("select app.canonical_email($1)")
+            .bind(spelling)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+        assert_eq!(
+            sql,
+            devtab_api::accounts::canonical_email(spelling),
+            "{spelling:?}"
+        );
+    }
+    let tag = uuid::Uuid::new_v4().simple().to_string();
+    let id = support::insert_auth_user(&mut tx, &format!("Ab.C+x{tag}@GoogleMail.com")).await;
+    let canonical = "select email_canonical from app.users where id = $1";
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(canonical)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap(),
+        Some("abc@gmail.com".to_owned())
+    );
+    sqlx::query("update auth.users set email = $2 where id = $1")
+        .bind(id)
+        .bind(format!("new.{tag}@example.invalid"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(canonical)
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap(),
+        Some(format!("new.{tag}@example.invalid"))
+    );
     tx.rollback().await.unwrap();
 }
 

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "insert into app.checkouts (user_id, plan_id, price_id, provider, locale, created_at, expires_at)\n         values ($1, $2, $3, $4, $5, $6, $7)\n         returning id",
+  "query": "insert into app.licence_members (licence_id, email, invited_at) values ($1, $2, $3)\n         on conflict (licence_id, email) do nothing\n         returning id",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Uuid",
         "origin": {
           "Table": {
-            "table": "app.checkouts",
+            "table": "app.licence_members",
             "name": "id"
           }
         }
@@ -19,10 +19,6 @@
       "Left": [
         "Uuid",
         "Text",
-        "Uuid",
-        "Text",
-        "Text",
-        "Timestamptz",
         "Timestamptz"
       ]
     },
@@ -30,5 +26,5 @@
       false
     ]
   },
-  "hash": "2f5fd2aded333496a25782cb840aac889ef3c1c4fa5422fab598dbdf26d81c71"
+  "hash": "8bfeb03b7fb82421208cd476416c8d60947000bc03bb254d9a31bff6f3608335"
 }

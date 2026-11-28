@@ -16,6 +16,17 @@
 //! started it (never by an address in the event): the provider's customer is
 //! tied to that person, the key is kept to be shown once, and the checkout is
 //! completed.
+//!
+//! A guest checkout (started without an account) has no person yet: when its
+//! subscription is paid, the buyer is the user of the address they typed in
+//! the provider's checkout (read from the provider): the account with that
+//! exact address, else the first with the same canonical inbox
+//! ([`canonical_email`]: `a.b+x@gmail.com` is `ab@gmail.com`), else a new one
+//! invited by mail ([`Accounts`]), never invited twice. That happens inside the subscription's lock and the job's
+//! transaction, and the lookup comes first, so a job tried again after a
+//! failure finds the user the first attempt invited instead of inviting
+//! again. A buyer who had an account gets no invite; a `licence-added` mail
+//! is queued for them instead, which waits for the mailer.
 
 use sqlx::PgConnection;
 use time::{Duration, OffsetDateTime};
@@ -23,9 +34,12 @@ use uuid::Uuid;
 
 use super::reconcile::{Decision, LicenceState, LicenceStatus, reconcile};
 use super::{EventSource, ProviderError, Signal, SubscriptionSnapshot};
+use crate::accounts::{AccountError, Accounts, Invitation, canonical_email, normal_email};
 use crate::licence::key;
+use crate::mail::queue::{self, To};
+use crate::mail::{MailKind, MailSchedule};
 use crate::store::licences::{NewLicence, SubscriptionLicence};
-use crate::store::{checkouts, customers, events, licences, plans, reveals};
+use crate::store::{checkouts, customers, events, licences, plans, reveals, users};
 
 /// How long a new key waits to be shown.
 pub const REVEAL_FOR: Duration = Duration::hours(24);
@@ -78,10 +92,20 @@ pub enum LicenceChange {
     Waiting,
 }
 
+/// What processing uses besides the provider: `accounts` invites the buyers
+/// of guest checkouts (none: such a checkout waits), `schedule` says when
+/// the reminders go out.
+#[derive(Debug, Clone, Copy)]
+pub struct Hooks<'a> {
+    pub accounts: Option<&'a Accounts>,
+    pub schedule: &'a MailSchedule,
+}
+
 /// Processes the stored event `id` in the caller's transaction.
 pub async fn process_event(
     conn: &mut PgConnection,
     source: &dyn EventSource,
+    hooks: &Hooks<'_>,
     id: i64,
     now: OffsetDateTime,
 ) -> Result<Processed, ProcessError> {
@@ -114,13 +138,13 @@ pub async fn process_event(
                 ..
             } => {
                 acted = true;
-                sync_subscription(conn, source, &subscription, Some(checkout), now).await?;
+                sync_subscription(conn, source, hooks, &subscription, Some(checkout), now).await?;
             }
             Signal::SubscriptionChanged { subscription }
             | Signal::InvoicePaid { subscription }
             | Signal::PaymentFailed { subscription } => {
                 acted = true;
-                sync_subscription(conn, source, &subscription, None, now).await?;
+                sync_subscription(conn, source, hooks, &subscription, None, now).await?;
             }
             Signal::Refunded { charge } => {
                 acted = true;
@@ -154,7 +178,11 @@ async fn lock(
     provider: &str,
     subscription: &str,
 ) -> Result<(), sqlx::Error> {
-    let key = format!("payments:{provider}:{subscription}");
+    lock_key(conn, &format!("payments:{provider}:{subscription}")).await
+}
+
+/// Takes the advisory lock named `key` for the rest of the transaction.
+async fn lock_key(conn: &mut PgConnection, key: &str) -> Result<(), sqlx::Error> {
     sqlx::query!("select pg_advisory_xact_lock(hashtextextended($1, 0))", key)
         .execute(&mut *conn)
         .await
@@ -166,6 +194,7 @@ async fn lock(
 pub async fn sync_subscription(
     conn: &mut PgConnection,
     source: &dyn EventSource,
+    hooks: &Hooks<'_>,
     subscription: &str,
     checkout: Option<Uuid>,
     now: OffsetDateTime,
@@ -203,9 +232,10 @@ pub async fn sync_subscription(
                     ),
                 })
             })?;
-            let id = issue(
+            let id = issue_from_checkout(
                 conn,
-                provider,
+                source,
+                hooks,
                 &snapshot,
                 &checkout,
                 &price.plan_id,
@@ -228,6 +258,7 @@ pub async fn sync_subscription(
             if state.is_none() && !plan_moved && !resized {
                 LicenceChange::Unchanged
             } else {
+                let was = licence.clone();
                 if let Some(state) = state {
                     state.status.as_str().clone_into(&mut licence.status);
                     licence.paid_until = state.paid_until;
@@ -239,6 +270,7 @@ pub async fn sync_subscription(
                 licence.members = members;
                 licence.seats = seats;
                 licences::apply_subscription(&mut *conn, &licence).await?;
+                queue_subscription_mails(conn, hooks.schedule, Some(&was), &licence, now).await?;
                 LicenceChange::Updated(licence.id)
             }
         }
@@ -286,13 +318,163 @@ async fn complete_open(
     Ok(())
 }
 
-/// The first licence of a paid subscription, for the person who started the
-/// checkout.
+/// The first licence of a paid subscription from our `checkout`: for the
+/// person who started it, or a guest checkout's buyer, found or invited now.
+/// A buyer who had an account gets no invite, and the mail that says the
+/// licence is in their account is queued (a `licence-added` mail).
+#[allow(clippy::too_many_arguments)]
+async fn issue_from_checkout(
+    conn: &mut PgConnection,
+    source: &dyn EventSource,
+    hooks: &Hooks<'_>,
+    snapshot: &SubscriptionSnapshot,
+    checkout: &checkouts::CheckoutRow,
+    plan_id: &str,
+    state: LicenceState,
+    now: OffsetDateTime,
+) -> Result<Uuid, ProcessError> {
+    let provider = source.id();
+    let (owner, buyer) = if let Some(user) = checkout.user_id {
+        (user, None)
+    } else {
+        let buyer = ensure_buyer(conn, source, hooks.accounts, checkout).await?;
+        checkouts::set_buyer(&mut *conn, checkout.id, buyer.user(), buyer.as_str()).await?;
+        (buyer.user(), Some(buyer))
+    };
+    let id = issue(
+        conn, provider, snapshot, checkout, owner, plan_id, state, now,
+    )
+    .await?;
+    licences::set_locale(&mut *conn, id, &checkout.locale).await?;
+    // A purchase replaces a running trial.
+    let trials = licences::end_trials_of(&mut *conn, owner, now).await?;
+    if trials > 0 {
+        tracing::info!(trials, "a purchase ended the buyer's trial");
+    }
+    // One mail for the purchase: an address that had an account gets no
+    // invite, so it learns that the licence is in its account; everyone else
+    // is welcomed (an invited buyer's invite is Supabase Auth's own mail).
+    let kind = match buyer {
+        Some(Buyer::Existing(_)) => MailKind::LicenceAdded,
+        _ => MailKind::Welcome,
+    };
+    queue::queue(
+        &mut *conn,
+        kind,
+        To::User(owner),
+        Some(&checkout.locale),
+        serde_json::json!({ "licence": id, "checkout": checkout.id }),
+        now,
+        &id.to_string(),
+    )
+    .await?;
+    if let Some(licence) =
+        licences::find_by_subscription_for_update(&mut *conn, provider, &snapshot.id).await?
+    {
+        queue_subscription_mails(conn, hooks.schedule, None, &licence, now).await?;
+    }
+    Ok(id)
+}
+
+/// The mails a change of a subscription's licence from `was` (none: just
+/// issued) to `now_licence` calls for, each once: payment failed (it became
+/// overdue), cancelled (it stopped renewing), ended, and, for a yearly plan,
+/// the reminder `schedule.renewal_remind_days` before a renewal (for each new
+/// period end). Whether each is still due is checked again when it is sent.
+async fn queue_subscription_mails(
+    conn: &mut PgConnection,
+    schedule: &MailSchedule,
+    was: Option<&SubscriptionLicence>,
+    now_licence: &SubscriptionLicence,
+    now: OffsetDateTime,
+) -> Result<(), ProcessError> {
+    let (Some(user), Some(mail)) = (
+        now_licence.user_id,
+        licences::find_for_mail(&mut *conn, now_licence.id).await?,
+    ) else {
+        return Ok(());
+    };
+    let id = now_licence.id;
+    let locale = mail.locale.as_deref();
+    let to = To::User(user);
+    let data = serde_json::json!({ "licence": id });
+    let unix = |at: Option<OffsetDateTime>| at.map_or(0, OffsetDateTime::unix_timestamp);
+    let active = now_licence.status == "active";
+    if let Some(since) = now_licence.past_due_since
+        && was.is_some_and(|w| w.past_due_since.is_none())
+    {
+        let key = format!("{id}:{}", since.unix_timestamp());
+        queue::queue(
+            &mut *conn,
+            MailKind::PaymentFailed,
+            to,
+            locale,
+            data.clone(),
+            now,
+            &key,
+        )
+        .await?;
+    }
+    if active && now_licence.cancel_at_period_end && was.is_some_and(|w| !w.cancel_at_period_end) {
+        let key = format!("{id}:{}", unix(now_licence.paid_until));
+        queue::queue(
+            &mut *conn,
+            MailKind::SubscriptionCancelled,
+            to,
+            locale,
+            data.clone(),
+            now,
+            &key,
+        )
+        .await?;
+    }
+    if now_licence.status == "ended" && was.is_some_and(|w| w.status != "ended") {
+        let key = format!("{id}:{}", unix(now_licence.ended_at));
+        queue::queue(
+            &mut *conn,
+            MailKind::SubscriptionEnded,
+            to,
+            locale,
+            data.clone(),
+            now,
+            &key,
+        )
+        .await?;
+    }
+    if let Some(end) = now_licence.paid_until
+        && active
+        && !now_licence.cancel_at_period_end
+        && mail.term.as_deref() == Some("year")
+        && was.is_none_or(|w| w.paid_until != now_licence.paid_until)
+    {
+        let at = end - time::Duration::days(i64::from(schedule.renewal_remind_days));
+        if at > now {
+            let key = format!("{id}:{}", end.unix_timestamp());
+            let data = serde_json::json!({ "licence": id, "period_end": end.unix_timestamp() });
+            queue::queue(
+                &mut *conn,
+                MailKind::RenewalReminder,
+                to,
+                locale,
+                data,
+                at,
+                &key,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// The first licence of a paid subscription, for `owner`: the person who
+/// started the checkout, or a guest checkout's buyer.
+#[allow(clippy::too_many_arguments)]
 async fn issue(
     conn: &mut PgConnection,
     provider: &str,
     snapshot: &SubscriptionSnapshot,
     checkout: &checkouts::CheckoutRow,
+    owner: Uuid,
     plan_id: &str,
     state: LicenceState,
     now: OffsetDateTime,
@@ -304,14 +486,21 @@ async fn issue(
         )));
     }
     let (members, seats) = team_size(conn, plan_id, snapshot.quantity).await?;
-    let customer = customer_of(conn, provider, &snapshot.customer, checkout.user_id).await?;
+    let customer = customer_of(
+        conn,
+        provider,
+        &snapshot.customer,
+        owner,
+        checkout.is_guest(),
+    )
+    .await?;
     let lid = key::new_lid().map_err(|err| ProcessError::Retry(err.to_string()))?;
     let new_key = key::generate().map_err(|err| ProcessError::Retry(err.to_string()))?;
     let id = licences::insert(
         &mut *conn,
         &NewLicence {
             lid: &lid,
-            user_id: Some(checkout.user_id),
+            user_id: Some(owner),
             customer_id: Some(customer),
             plan_id,
             kind: "subscription",
@@ -354,13 +543,15 @@ async fn team_size(
 }
 
 /// The provider's customer of `user_id`: found, or recorded now. A customer
-/// tied to someone else, or a second customer of the same person, stops the
-/// issue: one account is one customer.
+/// tied to someone else stops the issue, and so does a second customer of a
+/// person who bought signed in (the checkout named their customer). A guest
+/// checkout could name none, so its buyer may have had one already.
 async fn customer_of(
     conn: &mut PgConnection,
     provider: &str,
     provider_customer_id: &str,
     user_id: Uuid,
+    guest: bool,
 ) -> Result<Uuid, ProcessError> {
     if let Some(customer) =
         customers::find_by_provider_id(&mut *conn, provider, provider_customer_id).await?
@@ -373,15 +564,130 @@ async fn customer_of(
             )))
         };
     }
-    if customers::find_of_user(&mut *conn, user_id, provider)
-        .await?
-        .is_some()
+    if !guest
+        && customers::find_of_user(&mut *conn, user_id, provider)
+            .await?
+            .is_some()
     {
         return Err(ProcessError::Permanent(format!(
             "the account already has another customer at {provider} than {provider_customer_id}"
         )));
     }
     Ok(customers::insert(&mut *conn, user_id, provider, provider_customer_id).await?)
+}
+
+/// How a guest checkout's buyer got the account the licence goes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Buyer {
+    /// A new user, invited by mail now.
+    Invited(Uuid),
+    /// The address had an account already: nobody is invited.
+    Existing(Uuid),
+}
+
+impl Buyer {
+    pub fn user(self) -> Uuid {
+        match self {
+            Self::Invited(id) | Self::Existing(id) => id,
+        }
+    }
+
+    /// As `app.checkouts.buyer` records it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Invited(_) => "invited",
+            Self::Existing(_) => "existing",
+        }
+    }
+}
+
+/// The user a paid guest checkout belongs to: the account of the address the
+/// buyer typed at the provider, or a new one invited by mail.
+///
+/// The account with the exact address (trimmed, lower case) comes first;
+/// else the first account of the same canonical inbox, so that one inbox is
+/// one account whatever its spelling (the trial without a card is once per
+/// inbox, D35); only then is the typed address invited, as typed. Under an
+/// advisory lock on the inbox, so that two purchases of one inbox never both
+/// invite it; the lookups come before the invite, so a retry after a failed
+/// transaction finds the user instead of inviting again (Supabase Auth would
+/// send an unconfirmed address another invite).
+async fn ensure_buyer(
+    conn: &mut PgConnection,
+    source: &dyn EventSource,
+    accounts: Option<&Accounts>,
+    checkout: &checkouts::CheckoutRow,
+) -> Result<Buyer, ProcessError> {
+    let accounts = accounts.ok_or_else(|| {
+        ProcessError::Retry(format!(
+            "checkout {} was started without an account, and no Supabase secret key is set to \
+             invite its buyer (DEVTAB_SUPABASE_SECRET_KEY_FILE)",
+            checkout.id
+        ))
+    })?;
+    let session = checkout.provider_checkout_id.as_deref().ok_or_else(|| {
+        ProcessError::Permanent(format!(
+            "guest checkout {} has no checkout at the provider to read the buyer's address from",
+            checkout.id
+        ))
+    })?;
+    let typed = source.checkout_email(session).await?.ok_or_else(|| {
+        ProcessError::Permanent(format!(
+            "guest checkout {}: the provider has no address of the buyer",
+            checkout.id
+        ))
+    })?;
+    let email = normal_email(&typed).ok_or_else(|| {
+        ProcessError::Permanent(format!(
+            "guest checkout {}: the buyer's address at the provider is not an address",
+            checkout.id
+        ))
+    })?;
+    let inbox = canonical_email(&email).unwrap_or_else(|| email.clone());
+    lock_key(conn, &format!("accounts:{inbox}")).await?;
+    if let Some(user) = find_buyer(conn, &email, &inbox).await? {
+        tracing::info!(checkout = %checkout.id, "a guest checkout's buyer has an account: no invite");
+        return Ok(Buyer::Existing(user));
+    }
+    let team = plans::find(&mut *conn, &checkout.plan_id)
+        .await?
+        .is_some_and(|plan| plan.min_members.is_some());
+    let invitation = Invitation {
+        locale: &checkout.locale,
+        checkout: checkout.id,
+        team,
+    };
+    match accounts.invite(&email, &invitation).await {
+        Ok(user) => {
+            tracing::info!(checkout = %checkout.id, "a guest checkout's buyer was invited");
+            Ok(Buyer::Invited(user))
+        }
+        // Made in the meantime, elsewhere (a sign-up): theirs, uninvited.
+        Err(AccountError::Exists) => find_buyer(conn, &email, &inbox)
+            .await?
+            .map(Buyer::Existing)
+            .ok_or_else(|| {
+                ProcessError::Retry(format!(
+                    "guest checkout {}: Supabase Auth says the buyer's address has an account, \
+                     which is not found yet",
+                    checkout.id
+                ))
+            }),
+        Err(err @ AccountError::Unavailable(_)) => Err(ProcessError::Retry(err.to_string())),
+        Err(err @ AccountError::Refused(_)) => Err(ProcessError::Permanent(err.to_string())),
+    }
+}
+
+/// The account of `email` exactly, else the first of its canonical `inbox`.
+async fn find_buyer(
+    conn: &mut PgConnection,
+    email: &str,
+    inbox: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    if let Some(user) = users::id_by_email(&mut *conn, email).await? {
+        return Ok(Some(user));
+    }
+    users::id_by_canonical_email(&mut *conn, inbox).await
 }
 
 /// A full refund or a lost dispute revokes the subscription's licence.
