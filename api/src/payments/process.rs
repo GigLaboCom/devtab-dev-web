@@ -35,10 +35,11 @@ use uuid::Uuid;
 use super::reconcile::{Decision, LicenceState, LicenceStatus, reconcile};
 use super::{EventSource, ProviderError, Signal, SubscriptionSnapshot};
 use crate::accounts::{AccountError, Accounts, Invitation, canonical_email, normal_email};
-use crate::jobs::worker::{MAIL, mails};
 use crate::licence::key;
+use crate::mail::queue::{self, To};
+use crate::mail::{MailKind, MailSchedule};
 use crate::store::licences::{NewLicence, SubscriptionLicence};
-use crate::store::{checkouts, customers, events, jobs, licences, plans, reveals, users};
+use crate::store::{checkouts, customers, events, licences, plans, reveals, users};
 
 /// How long a new key waits to be shown.
 pub const REVEAL_FOR: Duration = Duration::hours(24);
@@ -91,12 +92,20 @@ pub enum LicenceChange {
     Waiting,
 }
 
-/// Processes the stored event `id` in the caller's transaction; `accounts`
-/// invites the buyers of guest checkouts (none: such a checkout waits).
+/// What processing uses besides the provider: `accounts` invites the buyers
+/// of guest checkouts (none: such a checkout waits), `schedule` says when
+/// the reminders go out.
+#[derive(Debug, Clone, Copy)]
+pub struct Hooks<'a> {
+    pub accounts: Option<&'a Accounts>,
+    pub schedule: &'a MailSchedule,
+}
+
+/// Processes the stored event `id` in the caller's transaction.
 pub async fn process_event(
     conn: &mut PgConnection,
     source: &dyn EventSource,
-    accounts: Option<&Accounts>,
+    hooks: &Hooks<'_>,
     id: i64,
     now: OffsetDateTime,
 ) -> Result<Processed, ProcessError> {
@@ -129,14 +138,13 @@ pub async fn process_event(
                 ..
             } => {
                 acted = true;
-                sync_subscription(conn, source, accounts, &subscription, Some(checkout), now)
-                    .await?;
+                sync_subscription(conn, source, hooks, &subscription, Some(checkout), now).await?;
             }
             Signal::SubscriptionChanged { subscription }
             | Signal::InvoicePaid { subscription }
             | Signal::PaymentFailed { subscription } => {
                 acted = true;
-                sync_subscription(conn, source, accounts, &subscription, None, now).await?;
+                sync_subscription(conn, source, hooks, &subscription, None, now).await?;
             }
             Signal::Refunded { charge } => {
                 acted = true;
@@ -186,7 +194,7 @@ async fn lock_key(conn: &mut PgConnection, key: &str) -> Result<(), sqlx::Error>
 pub async fn sync_subscription(
     conn: &mut PgConnection,
     source: &dyn EventSource,
-    accounts: Option<&Accounts>,
+    hooks: &Hooks<'_>,
     subscription: &str,
     checkout: Option<Uuid>,
     now: OffsetDateTime,
@@ -227,7 +235,7 @@ pub async fn sync_subscription(
             let id = issue_from_checkout(
                 conn,
                 source,
-                accounts,
+                hooks,
                 &snapshot,
                 &checkout,
                 &price.plan_id,
@@ -250,6 +258,7 @@ pub async fn sync_subscription(
             if state.is_none() && !plan_moved && !resized {
                 LicenceChange::Unchanged
             } else {
+                let was = licence.clone();
                 if let Some(state) = state {
                     state.status.as_str().clone_into(&mut licence.status);
                     licence.paid_until = state.paid_until;
@@ -261,6 +270,7 @@ pub async fn sync_subscription(
                 licence.members = members;
                 licence.seats = seats;
                 licences::apply_subscription(&mut *conn, &licence).await?;
+                queue_subscription_mails(conn, hooks.schedule, Some(&was), &licence, now).await?;
                 LicenceChange::Updated(licence.id)
             }
         }
@@ -316,7 +326,7 @@ async fn complete_open(
 async fn issue_from_checkout(
     conn: &mut PgConnection,
     source: &dyn EventSource,
-    accounts: Option<&Accounts>,
+    hooks: &Hooks<'_>,
     snapshot: &SubscriptionSnapshot,
     checkout: &checkouts::CheckoutRow,
     plan_id: &str,
@@ -324,42 +334,131 @@ async fn issue_from_checkout(
     now: OffsetDateTime,
 ) -> Result<Uuid, ProcessError> {
     let provider = source.id();
-    let Some(user) = checkout.user_id else {
-        let buyer = ensure_buyer(conn, source, accounts, checkout).await?;
+    let (owner, buyer) = if let Some(user) = checkout.user_id {
+        (user, None)
+    } else {
+        let buyer = ensure_buyer(conn, source, hooks.accounts, checkout).await?;
         checkouts::set_buyer(&mut *conn, checkout.id, buyer.user(), buyer.as_str()).await?;
-        let id = issue(
-            conn,
-            provider,
-            snapshot,
-            checkout,
-            buyer.user(),
-            plan_id,
-            state,
+        (buyer.user(), Some(buyer))
+    };
+    let id = issue(
+        conn, provider, snapshot, checkout, owner, plan_id, state, now,
+    )
+    .await?;
+    licences::set_locale(&mut *conn, id, &checkout.locale).await?;
+    // One mail for the purchase: an address that had an account gets no
+    // invite, so it learns that the licence is in its account; everyone else
+    // is welcomed (an invited buyer's invite is Supabase Auth's own mail).
+    let kind = match buyer {
+        Some(Buyer::Existing(_)) => MailKind::LicenceAdded,
+        _ => MailKind::Welcome,
+    };
+    queue::queue(
+        &mut *conn,
+        kind,
+        To::User(owner),
+        Some(&checkout.locale),
+        serde_json::json!({ "licence": id, "checkout": checkout.id }),
+        now,
+        &id.to_string(),
+    )
+    .await?;
+    if let Some(licence) =
+        licences::find_by_subscription_for_update(&mut *conn, provider, &snapshot.id).await?
+    {
+        queue_subscription_mails(conn, hooks.schedule, None, &licence, now).await?;
+    }
+    Ok(id)
+}
+
+/// The mails a change of a subscription's licence from `was` (none: just
+/// issued) to `now_licence` calls for, each once: payment failed (it became
+/// overdue), cancelled (it stopped renewing), ended, and, for a yearly plan,
+/// the reminder `schedule.renewal_remind_days` before a renewal (for each new
+/// period end). Whether each is still due is checked again when it is sent.
+async fn queue_subscription_mails(
+    conn: &mut PgConnection,
+    schedule: &MailSchedule,
+    was: Option<&SubscriptionLicence>,
+    now_licence: &SubscriptionLicence,
+    now: OffsetDateTime,
+) -> Result<(), ProcessError> {
+    let (Some(user), Some(mail)) = (
+        now_licence.user_id,
+        licences::find_for_mail(&mut *conn, now_licence.id).await?,
+    ) else {
+        return Ok(());
+    };
+    let id = now_licence.id;
+    let locale = mail.locale.as_deref();
+    let to = To::User(user);
+    let data = serde_json::json!({ "licence": id });
+    let unix = |at: Option<OffsetDateTime>| at.map_or(0, OffsetDateTime::unix_timestamp);
+    let active = now_licence.status == "active";
+    if let Some(since) = now_licence.past_due_since
+        && was.is_some_and(|w| w.past_due_since.is_none())
+    {
+        let key = format!("{id}:{}", since.unix_timestamp());
+        queue::queue(
+            &mut *conn,
+            MailKind::PaymentFailed,
+            to,
+            locale,
+            data.clone(),
             now,
+            &key,
         )
         .await?;
-        if let Buyer::Existing(_) = buyer {
-            // No invite for an address that has an account: the licence is in
-            // it. The mail that says so waits for the mailer.
-            jobs::enqueue(
+    }
+    if active && now_licence.cancel_at_period_end && was.is_some_and(|w| !w.cancel_at_period_end) {
+        let key = format!("{id}:{}", unix(now_licence.paid_until));
+        queue::queue(
+            &mut *conn,
+            MailKind::SubscriptionCancelled,
+            to,
+            locale,
+            data.clone(),
+            now,
+            &key,
+        )
+        .await?;
+    }
+    if now_licence.status == "ended" && was.is_some_and(|w| w.status != "ended") {
+        let key = format!("{id}:{}", unix(now_licence.ended_at));
+        queue::queue(
+            &mut *conn,
+            MailKind::SubscriptionEnded,
+            to,
+            locale,
+            data.clone(),
+            now,
+            &key,
+        )
+        .await?;
+    }
+    if let Some(end) = now_licence.paid_until
+        && active
+        && !now_licence.cancel_at_period_end
+        && mail.term.as_deref() == Some("year")
+        && was.is_none_or(|w| w.paid_until != now_licence.paid_until)
+    {
+        let at = end - time::Duration::days(i64::from(schedule.renewal_remind_days));
+        if at > now {
+            let key = format!("{id}:{}", end.unix_timestamp());
+            let data = serde_json::json!({ "licence": id, "period_end": end.unix_timestamp() });
+            queue::queue(
                 &mut *conn,
-                MAIL,
-                &serde_json::json!({
-                    "mail": mails::LICENCE_ADDED,
-                    "user": buyer.user(),
-                    "locale": checkout.locale,
-                    "data": { "licence": id, "checkout": checkout.id, "plan": plan_id },
-                }),
-                now,
+                MailKind::RenewalReminder,
+                to,
+                locale,
+                data,
+                at,
+                &key,
             )
             .await?;
         }
-        return Ok(id);
-    };
-    issue(
-        conn, provider, snapshot, checkout, user, plan_id, state, now,
-    )
-    .await
+    }
+    Ok(())
 }
 
 /// The first licence of a paid subscription, for `owner`: the person who

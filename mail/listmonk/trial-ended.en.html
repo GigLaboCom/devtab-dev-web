@@ -1,0 +1,10 @@
+{{- /* DevTab.Dev, trial-ended (en). Skeleton: the texts await the owner. Data: .Tx.Data.site_url, plans_url, connect_url, sign_in_url, plan_name, key_hint, members, ends_on, days_left (api/src/mail/compose.rs); never the subscriber's own fields, which external mode leaves empty. */ -}}
+<!doctype html>
+<html lang="en">
+  <body>
+    <h1>Your DevTab.Dev trial has ended</h1>
+    <p>Your trial has ended. The free plan keeps working.</p>
+    <p>Whenever you want Pro again: <a href="{{ .Tx.Data.plans_url }}">see the plans</a>.</p>
+    <p><small>You get this e-mail because of your DevTab.Dev account. <a href="{{ .Tx.Data.site_url }}">DevTab.Dev</a></small></p>
+  </body>
+</html>

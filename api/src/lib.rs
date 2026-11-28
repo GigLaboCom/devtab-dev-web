@@ -11,6 +11,7 @@ pub mod config;
 pub mod http;
 pub mod jobs;
 pub mod licence;
+pub mod mail;
 pub mod payments;
 pub mod plans;
 pub mod state;

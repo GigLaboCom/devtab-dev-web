@@ -1,6 +1,7 @@
 //! Typed configuration from `DEVTAB_*` environment variables, read once at
 //! startup; every problem is reported at once.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
@@ -12,6 +13,8 @@ use tracing_subscriber::EnvFilter;
 use crate::accounts::AccountSettings;
 use crate::licence::LicenceSettings;
 use crate::licence::token::Spans;
+use crate::mail::listmonk::{ListmonkSettings, parse_templates};
+use crate::mail::{MailSchedule, MailSettings};
 use crate::payments;
 use crate::payments::stripe::{self, CheckoutUi, StripeMode, StripeSettings};
 use crate::plans::catalogue::CatalogueSettings;
@@ -123,6 +126,10 @@ pub struct Config {
     /// The file of the project's secret key (`DEVTAB_SUPABASE_SECRET_KEY_FILE`),
     /// with which the API invites the buyer of a guest checkout.
     pub supabase_secret_key_file: Option<PathBuf>,
+    /// Who sends the mails (`DEVTAB_MAIL`); off: they wait in the queue.
+    pub mail: MailSettings,
+    /// When the reminders go out.
+    pub mail_schedule: MailSchedule,
 }
 
 /// Where the access tokens of signed-in people are checked.
@@ -160,6 +167,8 @@ impl fmt::Debug for Config {
             .field("guest_checkout", &self.guest_checkout)
             .field("supabase_auth_url", &self.supabase_auth_url)
             .field("supabase_secret_key_file", &self.supabase_secret_key_file)
+            .field("mail", &self.mail)
+            .field("mail_schedule", &self.mail_schedule)
             .finish()
     }
 }
@@ -206,6 +215,8 @@ impl Default for Config {
             guest_checkout: false,
             supabase_auth_url: None,
             supabase_secret_key_file: None,
+            mail: MailSettings::Off,
+            mail_schedule: MailSchedule::default(),
         }
     }
 }
@@ -313,6 +324,77 @@ fn stripe_api_url(text: &str, env: Env) -> Option<String> {
         _ => false,
     };
     ok.then(|| text.to_owned())
+}
+
+/// listmonk's settings (`DEVTAB_MAIL=listmonk`); the token stays in its file,
+/// which `serve` reads.
+fn read_listmonk(
+    env: Env,
+    get: &impl Fn(&str) -> Option<String>,
+    problems: &mut Vec<String>,
+) -> Option<ListmonkSettings> {
+    let before = problems.len();
+    let url = if let Some(text) = get("DEVTAB_MAIL_LISTMONK_URL") {
+        let url = stripe_api_url(&text, env);
+        if url.is_none() {
+            problems.push(format!(
+                "DEVTAB_MAIL_LISTMONK_URL must be https://<host>[:port] with no path (http to the \
+                 loopback address in dev only), got `{text}`"
+            ));
+        }
+        url
+    } else {
+        problems.push("DEVTAB_MAIL_LISTMONK_URL is required with DEVTAB_MAIL=listmonk".to_owned());
+        None
+    };
+    let api_user = get("DEVTAB_MAIL_LISTMONK_API_USER");
+    if api_user.is_none() {
+        problems
+            .push("DEVTAB_MAIL_LISTMONK_API_USER is required with DEVTAB_MAIL=listmonk".to_owned());
+    }
+    let token_file = get("DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE").map(PathBuf::from);
+    if token_file.is_none() {
+        problems.push(
+            "DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE is required with DEVTAB_MAIL=listmonk: the file of \
+             the API user's token"
+                .to_owned(),
+        );
+    }
+    let templates = match get("DEVTAB_MAIL_LISTMONK_TEMPLATES").map(|t| parse_templates(&t)) {
+        None => BTreeMap::default(),
+        Some(Ok(map)) => map,
+        Some(Err(problem)) => {
+            problems.push(format!("DEVTAB_MAIL_LISTMONK_TEMPLATES: {problem}"));
+            BTreeMap::default()
+        }
+    };
+    let list_id = get("DEVTAB_MAIL_LISTMONK_LIST_ID").and_then(|text| {
+        let id = text.parse::<i64>().ok().filter(|id| *id > 0);
+        if id.is_none() {
+            problems.push(format!(
+                "DEVTAB_MAIL_LISTMONK_LIST_ID must be a list id, got `{text}`"
+            ));
+        }
+        id
+    });
+    let from = get("DEVTAB_MAIL_FROM");
+    if from
+        .as_ref()
+        .is_some_and(|f| f.len() > 200 || !f.contains('@') || f.chars().any(char::is_control))
+    {
+        problems.push("DEVTAB_MAIL_FROM must be an address, or `Name <address>`".to_owned());
+    }
+    if problems.len() > before {
+        return None;
+    }
+    Some(ListmonkSettings {
+        url: url?,
+        api_user: api_user?,
+        token_file: token_file?,
+        templates,
+        list_id,
+        from,
+    })
 }
 
 /// Stripe's settings (`DEVTAB_PAYMENTS=stripe`); the secrets stay in their
@@ -571,6 +653,7 @@ impl Config {
         config.read_plans(&get, &mut problems);
         config.read_auth(&get, &mut problems);
         config.read_accounts(&get, &mut problems);
+        config.read_mail(&get, &mut problems);
 
         if let Some(filter) = get("DEVTAB_LOG") {
             match EnvFilter::try_new(&filter) {
@@ -703,6 +786,54 @@ impl Config {
                     .to_owned(),
             );
         }
+    }
+
+    /// Who sends the mails, and when the reminders go out.
+    fn read_mail(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        config.mail = match get("DEVTAB_MAIL").as_deref() {
+            None | Some("none") => MailSettings::Off,
+            Some("log") if config.env == Env::Prod => {
+                problems.push(
+                    "DEVTAB_MAIL=log is refused in prod: it logs the mails instead of sending them"
+                        .to_owned(),
+                );
+                MailSettings::Off
+            }
+            Some("log") => MailSettings::Log,
+            Some("listmonk") => read_listmonk(config.env, get, problems)
+                .map_or(MailSettings::Off, MailSettings::Listmonk),
+            Some(other) => {
+                problems.push(format!(
+                    "DEVTAB_MAIL must be none, log or listmonk, got `{other}`"
+                ));
+                MailSettings::Off
+            }
+        };
+        if let Some(text) = get("DEVTAB_MAIL_TRIAL_REMIND_DAYS") {
+            let days: Option<Vec<u32>> = text
+                .split(',')
+                .map(|d| {
+                    d.trim()
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|d| (1..=13).contains(d))
+                })
+                .collect();
+            match days {
+                Some(mut days) if !days.is_empty() => {
+                    days.sort_unstable_by(|a, b| b.cmp(a));
+                    days.dedup();
+                    config.mail_schedule.trial_remind_days = days;
+                }
+                _ => problems.push(format!(
+                    "DEVTAB_MAIL_TRIAL_REMIND_DAYS must be days from 1 to 13, comma-separated, got \
+                     `{text}`"
+                )),
+            }
+        }
+        config.mail_schedule.renewal_remind_days =
+            whole(get, "DEVTAB_MAIL_RENEWAL_REMIND_DAYS", (7, 1, 60), problems);
     }
 
     /// The signing key's file and id, and in `dev` the developer's own key list.
@@ -1345,6 +1476,63 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err.0.len(), 3, "{err}");
+    }
+
+    #[test]
+    fn mail_is_off_unless_set_and_listmonk_needs_its_instance() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert_eq!(config.mail, MailSettings::Off);
+        assert_eq!(config.mail_schedule, MailSchedule::default());
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_MAIL", "listmonk"),
+            ("DEVTAB_MAIL_LISTMONK_URL", "https://lm.example.invalid/"),
+            ("DEVTAB_MAIL_LISTMONK_API_USER", "devtab"),
+            (
+                "DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE",
+                "/run/secrets/listmonk",
+            ),
+            (
+                "DEVTAB_MAIL_LISTMONK_TEMPLATES",
+                "welcome.en=3,welcome.ru=4",
+            ),
+            ("DEVTAB_MAIL_LISTMONK_LIST_ID", "9"),
+            ("DEVTAB_MAIL_FROM", "DevTab.Dev <no-reply@example.invalid>"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "1, 5,3"),
+            ("DEVTAB_MAIL_RENEWAL_REMIND_DAYS", "14"),
+        ])
+        .unwrap();
+        let MailSettings::Listmonk(listmonk) = &config.mail else {
+            panic!("listmonk: {:?}", config.mail);
+        };
+        assert_eq!(listmonk.url, "https://lm.example.invalid");
+        assert_eq!(listmonk.templates.len(), 2);
+        assert_eq!(listmonk.list_id, Some(9));
+        assert_eq!(config.mail_schedule.trial_remind_days, [5, 3, 1]);
+        assert_eq!(config.mail_schedule.renewal_remind_days, 14);
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_MAIL", "listmonk"),
+            ("DEVTAB_MAIL_LISTMONK_URL", "http://lm.example.invalid"),
+            ("DEVTAB_MAIL_LISTMONK_TEMPLATES", "welcome.de=1"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "0"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 5, "{err}");
+        let err = load(&[
+            ("DEVTAB_ENV", "prod"),
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_LICENCE_HOST", "licence.example.invalid"),
+            ("DEVTAB_EXTENSION_ORIGINS", ORIGIN),
+            ("DEVTAB_SITE_URL", "https://web.example.invalid"),
+            ("DEVTAB_SUPABASE_URL", SUPABASE),
+            ("DEVTAB_PAYMENTS", "stripe"),
+            ("DEVTAB_PAYMENTS_ENV", "live"),
+            ("DEVTAB_PAYMENTS_API_KEY_FILE", "/run/secrets/k"),
+            ("DEVTAB_MAIL", "log"),
+        ])
+        .unwrap_err();
+        assert!(err.0.iter().any(|p| p.contains("DEVTAB_MAIL=log")), "{err}");
     }
 
     #[test]

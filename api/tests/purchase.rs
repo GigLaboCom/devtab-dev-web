@@ -38,7 +38,7 @@ use devtab_api::payments::{
     EventSource, PaymentSnapshot, Payments, ProviderError, ProviderFuture, Signal,
     SubscriptionSnapshot, SubscriptionStatus,
 };
-use devtab_api::store::{checkouts, events, jobs};
+use devtab_api::store::{checkouts, events};
 use devtab_api::{AppState, Config, internal_app, public_app};
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use http_body_util::BodyExt as _;
@@ -294,7 +294,12 @@ impl World {
     ) -> Result<Processed, ProcessError> {
         let pool = support::api_pool(&self.url).await;
         let mut tx = pool.begin().await.unwrap();
-        let result = process::process_event(&mut tx, source, accounts, event, now).await;
+        let schedule = devtab_api::mail::MailSchedule::default();
+        let hooks = process::Hooks {
+            accounts,
+            schedule: &schedule,
+        };
+        let result = process::process_event(&mut tx, source, &hooks, event, now).await;
         if result.is_ok() {
             tx.commit().await.unwrap();
         }
@@ -1443,7 +1448,7 @@ impl World {
     async fn mail_jobs(&mut self, licence: Uuid) -> Vec<Value> {
         sqlx::query_scalar(
             "select payload from app.jobs where kind = 'mail'
-             and payload->'data'->>'licence' = $1::text and done_at is null",
+             and payload->'data'->>'licence' = $1::text order by id",
         )
         .bind(licence)
         .fetch_all(&mut self.owner)
@@ -1538,9 +1543,15 @@ async fn a_guest_purchase_invites_its_new_buyer_once_and_the_licence_is_theirs()
     .await
     .unwrap();
     assert_eq!(customer, Some(buyer));
-    assert!(
-        world.mail_jobs(licence).await.is_empty(),
-        "the invite is the mail"
+    assert_eq!(
+        world
+            .mail_jobs(licence)
+            .await
+            .iter()
+            .map(|job| job["mail"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("welcome")],
+        "the invite is Supabase Auth's; the welcome is ours"
     );
 
     // Later events of the subscription invite nobody.
@@ -1623,18 +1634,12 @@ async fn a_guest_buyer_who_has_an_account_is_not_invited_and_a_licence_mail_wait
         world.mail_jobs(licence).await,
         vec![json!({
             "mail": "licence-added", "user": person, "locale": "en",
-            "data": {"licence": licence, "checkout": checkout, "plan": world.plan},
+            "data": {"licence": licence, "checkout": checkout},
         })],
         "a mail of a kind, to a user, in a language, with record ids: no address"
     );
-    // The worker does not run it yet: it waits for the mailer.
-    let pool = support::api_pool(&world.url).await;
-    let mut tx = pool.begin().await.unwrap();
-    let due = jobs::claim_due(&mut *tx, now + Duration::days(1), 1000, &worker::RUNS)
-        .await
-        .unwrap();
-    assert!(due.iter().all(|job| job.kind != worker::MAIL));
-    tx.rollback().await.unwrap();
+    // Without a mailer the worker leaves it in the queue.
+    assert!(!worker::runs(&support::offline_state(&Config::default())).contains(&worker::MAIL));
     world.clean().await;
 }
 
@@ -1964,5 +1969,219 @@ async fn a_guest_buyer_is_found_by_the_exact_address_else_by_the_same_inbox() {
         "else the first account of the same inbox"
     );
     assert!(auth.asked.lock().unwrap().is_empty(), "nobody invited");
+    world.clean().await;
+}
+
+// ---- the trial and the mails ----
+
+impl World {
+    /// The mail jobs of a licence: kind, when due, done or not.
+    async fn mails_of(&mut self, licence: Uuid) -> Vec<(String, OffsetDateTime, bool)> {
+        sqlx::query_as::<_, (String, OffsetDateTime, bool)>(
+            "select payload->>'mail', run_at, done_at is not null from app.jobs
+             where kind = 'mail' and payload->'data'->>'licence' = $1::text order by run_at, id",
+        )
+        .bind(licence)
+        .fetch_all(&mut self.owner)
+        .await
+        .unwrap()
+    }
+
+    async fn payload_of(&mut self, licence: Uuid, kind: &str) -> Value {
+        sqlx::query_scalar(
+            "select payload from app.jobs where kind = 'mail'
+             and payload->'data'->>'licence' = $1::text and payload->>'mail' = $2",
+        )
+        .bind(licence)
+        .bind(kind)
+        .fetch_one(&mut self.owner)
+        .await
+        .unwrap()
+    }
+}
+
+/// The mail a job's payload makes now, as the worker would see it.
+async fn composed(
+    world: &World,
+    payload: &Value,
+    now: OffsetDateTime,
+) -> Option<devtab_api::mail::Mail> {
+    let pool = support::api_pool(&world.url).await;
+    let mut conn = pool.acquire().await.unwrap();
+    match devtab_api::mail::compose::compose(&mut conn, payload, "https://web.example.invalid", now)
+        .await
+        .unwrap()
+    {
+        devtab_api::mail::compose::Composed::Send(mail) => Some(mail),
+        devtab_api::mail::compose::Composed::Skip(_) => None,
+    }
+}
+
+#[tokio::test]
+async fn a_subscription_s_mails_come_once_for_each_change_and_only_while_true() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    sqlx::query(r#"update app.plans set "interval" = 'year' where id = $1"#)
+        .bind(&world.plan)
+        .execute(&mut world.owner)
+        .await
+        .unwrap();
+    let now = OffsetDateTime::now_utc();
+    let person = world.person().await;
+    let checkout = world.checkout(person, now).await;
+    let (sub, cus) = ids();
+    let double = Double::default();
+    let end = now + Duration::days(365);
+    let mut snapshot = world.snapshot(&sub, &cus, end);
+    double.set(snapshot.clone());
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session(checkout, &cus, &sub),
+            now,
+        )
+        .await;
+    world.process(&double, event, now).await.unwrap();
+    let licence: Uuid = world.licences_of(&sub).await[0].get("id");
+    let kinds = |mails: &[(String, OffsetDateTime, bool)]| -> Vec<String> {
+        mails.iter().map(|(k, _, _)| k.clone()).collect()
+    };
+    let mails = world.mails_of(licence).await;
+    assert_eq!(kinds(&mails), ["welcome", "renewal-reminder"]);
+    assert_eq!(
+        (end - mails[1].1).whole_days(),
+        7,
+        "a week before the renewal"
+    );
+
+    // Overdue, twice: one mail.
+    snapshot.status = SubscriptionStatus::PastDue;
+    double.set(snapshot.clone());
+    for _ in 0..2 {
+        let event = world
+            .event("invoice.payment_failed", paid_invoice(&sub), now)
+            .await;
+        world.process(&double, event, now).await.unwrap();
+    }
+    // Paid again, then cancelled, then ended.
+    snapshot.status = SubscriptionStatus::Active;
+    double.set(snapshot.clone());
+    let event = world.event("invoice.paid", paid_invoice(&sub), now).await;
+    world.process(&double, event, now).await.unwrap();
+    let failed = world.payload_of(licence, "payment-failed").await;
+    assert!(
+        composed(&world, &failed, now).await.is_none(),
+        "paid since: skipped"
+    );
+    snapshot.cancel_at_period_end = true;
+    double.set(snapshot.clone());
+    let event = world
+        .event("customer.subscription.updated", json!({"id": sub}), now)
+        .await;
+    world.process(&double, event, now).await.unwrap();
+    let reminder = world.payload_of(licence, "renewal-reminder").await;
+    assert!(
+        composed(&world, &reminder, now).await.is_none(),
+        "it will not renew: no reminder"
+    );
+    let cancelled = world.payload_of(licence, "subscription-cancelled").await;
+    let mail = composed(&world, &cancelled, now).await.expect("sent");
+    assert_eq!(mail.data["ends_on"].as_str().map(str::len), Some(10));
+    snapshot.status = SubscriptionStatus::Ended;
+    double.set(snapshot.clone());
+    let event = world
+        .event("customer.subscription.deleted", json!({"id": sub}), now)
+        .await;
+    world.process(&double, event, now).await.unwrap();
+    assert_eq!(
+        kinds(&world.mails_of(licence).await),
+        [
+            "welcome",
+            "payment-failed",
+            "subscription-cancelled",
+            "subscription-ended",
+            "renewal-reminder"
+        ]
+    );
+    world.clean().await;
+}
+
+#[tokio::test]
+async fn an_invited_team_member_gets_one_mail_while_still_invited() {
+    let Some(mut world) = World::with(false, Some(2)).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let keys = keys();
+    let state = support::api_state(&world.url, shared(&clock), &Config::default())
+        .await
+        .with_auth(Verifier::fixed(
+            &json!({"keys": [keys.jwk]}),
+            ISSUER.to_owned(),
+            shared(&clock),
+        ));
+    let owner = world.person().await;
+    let double = Double::default();
+    let (lid, _, _) = bought(&mut world, &double, owner, 3, clock.now()).await;
+    let licence: Uuid = sqlx::query_scalar("select id from app.licences where lid = $1")
+        .bind(&lid)
+        .fetch_one(&mut world.owner)
+        .await
+        .unwrap();
+    let path = format!("/internal/licences/{lid}/members");
+    let bearer = token(&keys, owner, &clock);
+    for _ in 0..2 {
+        let (status, _) = call(
+            state.clone(),
+            "POST",
+            &path,
+            &bearer,
+            Some(json!({"email": "Mate@Example.invalid", "locale": "ru"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+    let invites: Vec<Value> = sqlx::query_scalar(
+        "select payload from app.jobs where kind = 'mail' and payload->>'mail' = 'team-invite'
+         and payload->'data'->>'licence' = $1::text",
+    )
+    .bind(licence)
+    .fetch_all(&mut world.owner)
+    .await
+    .unwrap();
+    assert_eq!(invites.len(), 1, "invited twice, one mail");
+    assert!(invites[0].get("member").is_some() && invites[0].get("user").is_none());
+    assert!(
+        !invites[0].to_string().contains("mate@"),
+        "no address in the queue"
+    );
+    let mail = composed(&world, &invites[0], clock.now())
+        .await
+        .expect("sent");
+    assert_eq!(
+        (mail.to.as_str(), mail.locale.as_str()),
+        ("mate@example.invalid", "ru")
+    );
+    let (status, _) = call(
+        state,
+        "DELETE",
+        &format!("{path}/mate@example.invalid"),
+        &bearer,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(
+        composed(&world, &invites[0], clock.now()).await.is_none(),
+        "removed: skipped"
+    );
+    sqlx::query(
+        "delete from app.jobs where kind = 'mail' and payload->'data'->>'licence' = $1::text",
+    )
+    .bind(licence)
+    .execute(&mut world.owner)
+    .await
+    .unwrap();
     world.clean().await;
 }

@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::http::rate_limit::Limits;
 use crate::licence::LicenceSettings;
 use crate::licence::signer::Signer;
+use crate::mail::{MailSchedule, Mailer};
 use crate::payments::Payments;
 use crate::plans::catalogue::CatalogueSettings;
 use crate::store::Store;
@@ -40,6 +41,10 @@ pub struct AppState {
     /// checkout; none without the project's secret key, and then a guest
     /// checkout is refused (and one already paid waits for it).
     pub accounts: Option<Arc<Accounts>>,
+    /// Who sends the mails; none: `mail` jobs wait in the queue.
+    pub mailer: Option<Arc<dyn Mailer>>,
+    /// When the reminders go out.
+    pub mail_schedule: Arc<MailSchedule>,
 }
 
 impl AppState {
@@ -57,7 +62,16 @@ impl AppState {
             wake: Arc::new(Notify::new()),
             guest_checkout: config.guest_checkout,
             accounts: None,
+            mailer: None,
+            mail_schedule: Arc::new(config.mail_schedule.clone()),
         }
+    }
+
+    /// The same state, sending mails with `mailer`.
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Arc<dyn Mailer>) -> Self {
+        self.mailer = Some(mailer);
+        self
     }
 
     /// The same state, inviting the buyers of guest checkouts with `accounts`.

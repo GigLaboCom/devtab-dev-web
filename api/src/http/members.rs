@@ -13,8 +13,11 @@ use utoipa::ToSchema;
 
 use super::error::{AppError, ErrorBody};
 use super::json::JsonBody;
+use super::plans::Locale;
 use crate::auth::CurrentUser;
 use crate::licence::wire;
+use crate::mail::MailKind;
+use crate::mail::queue::{self, To};
 use crate::state::AppState;
 use crate::store::licences::LicenceRow;
 use crate::store::{installations, licences, members, plans};
@@ -41,6 +44,8 @@ pub struct Team {
 #[serde(deny_unknown_fields)]
 pub struct Invite {
     pub email: String,
+    /// The language of the invitation's mail (English when absent).
+    pub locale: Option<Locale>,
 }
 
 /// The owner's team licence, or 404 / 409 `not-a-team`.
@@ -153,9 +158,23 @@ pub async fn invite(
         if i32::try_from(invited.len()).unwrap_or(i32::MAX) >= count - 1 {
             return Err(AppError::TeamFull);
         }
-        members::add(&mut *tx, locked.id, &email, state.clock.now()).await?;
+        let now = state.clock.now();
+        if let Some(member) = members::add(&mut *tx, locked.id, &email, now).await? {
+            let locale = body.locale.unwrap_or_default().code();
+            queue::queue(
+                &mut *tx,
+                MailKind::TeamInvite,
+                To::Member(member),
+                Some(locale),
+                serde_json::json!({ "licence": locked.id }),
+                now,
+                &member.to_string(),
+            )
+            .await?;
+        }
     }
     tx.commit().await?;
+    state.wake.notify_one();
     Ok(StatusCode::CREATED)
 }
 

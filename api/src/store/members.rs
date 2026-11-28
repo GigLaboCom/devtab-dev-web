@@ -27,23 +27,37 @@ pub async fn of_licence(
     .await
 }
 
-/// Invites `email` (lower case); false when already invited.
+/// Invites `email` (lower case): the member's id; none when already invited.
 pub async fn add(
     db: impl PgExecutor<'_>,
     licence_id: Uuid,
     email: &str,
     now: OffsetDateTime,
-) -> Result<bool, sqlx::Error> {
-    let added = sqlx::query!(
+) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar!(
         "insert into app.licence_members (licence_id, email, invited_at) values ($1, $2, $3)
-         on conflict (licence_id, email) do nothing",
+         on conflict (licence_id, email) do nothing
+         returning id",
         licence_id,
         email,
         now,
     )
-    .execute(db)
+    .fetch_optional(db)
+    .await
+}
+
+/// A member by id: their licence and address.
+pub async fn find_by_id(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+) -> Result<Option<(Uuid, String)>, sqlx::Error> {
+    let row = sqlx::query!(
+        "select licence_id, email from app.licence_members where id = $1",
+        id,
+    )
+    .fetch_optional(db)
     .await?;
-    Ok(added.rows_affected() == 1)
+    Ok(row.map(|r| (r.licence_id, r.email)))
 }
 
 /// Removes the member; the person they became, if any; `None` when there

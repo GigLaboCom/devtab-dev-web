@@ -31,6 +31,28 @@ pub async fn enqueue(
     .await
 }
 
+/// Queues a job once: none is added when a job with `dedupe_key` was ever
+/// queued (done or not). True when this one was added.
+pub async fn enqueue_once(
+    db: impl PgExecutor<'_>,
+    kind: &str,
+    payload: &Value,
+    run_at: OffsetDateTime,
+    dedupe_key: &str,
+) -> Result<bool, sqlx::Error> {
+    let added = sqlx::query!(
+        "insert into app.jobs (kind, payload, run_at, dedupe_key) values ($1, $2, $3, $4)
+         on conflict (dedupe_key) where dedupe_key is not null do nothing",
+        kind,
+        payload,
+        run_at,
+        dedupe_key,
+    )
+    .execute(db)
+    .await?;
+    Ok(added.rows_affected() == 1)
+}
+
 /// Up to `limit` jobs of the `kinds` the caller runs, due at `now`, locked
 /// for the caller's transaction and skipped by every other one. A job of
 /// another kind waits in the queue for a worker that runs it.

@@ -269,6 +269,7 @@ export interface components {
         /** @description An address to invite. */
         Invite: {
             email: string;
+            locale?: null | components["schemas"]["Locale"];
         };
         /**
          * @description The languages of the site's pages.

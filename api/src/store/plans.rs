@@ -24,6 +24,22 @@ pub struct PlanRow {
     pub min_members: Option<i16>,
 }
 
+/// A plan's name in `locale`, else in English, else none.
+pub async fn name_in(
+    db: impl PgExecutor<'_>,
+    plan_id: &str,
+    locale: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        "select name from app.plan_texts where plan_id = $1
+         order by (locale = $2) desc, (locale = 'en') desc limit 1",
+        plan_id,
+        locale,
+    )
+    .fetch_optional(db)
+    .await
+}
+
 /// The texts of a plan's card in one language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanTextRow {

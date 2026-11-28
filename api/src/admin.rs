@@ -4,6 +4,7 @@
 //!
 //! Licence keys are printed once, when made; only their hashes are stored.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -46,6 +47,23 @@ pub enum AdminCommand {
     /// Stripe: check the settings, the secrets and the plans' prices.
     #[command(subcommand)]
     Stripe(StripeCommand),
+    /// Mail: the templates of the mail provider.
+    #[command(subcommand)]
+    Mail(MailCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MailCommand {
+    /// Create or update the listmonk transactional templates of every kind
+    /// and language (built into the binary from mail/listmonk/), matched by
+    /// name, and print `DEVTAB_MAIL_LISTMONK_TEMPLATES` for the deploy
+    /// configuration. Without `--apply` it only reads (the instance, when
+    /// `DEVTAB_MAIL=listmonk` names one) and says what it would do. It changes
+    /// listmonk alone, nothing in the database.
+    Templates {
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -211,8 +229,8 @@ pub async fn execute(
             )
             .await
         }
-        AdminCommand::Keys(_) | AdminCommand::Stripe(_) => {
-            bail!("the keys and stripe commands do not use the database")
+        AdminCommand::Keys(_) | AdminCommand::Stripe(_) | AdminCommand::Mail(_) => {
+            bail!("the keys, stripe and mail commands do not use the database")
         }
     }
 }
@@ -724,6 +742,73 @@ pub async fn stripe_check(config: &Config, file: &Path, out: &mut dyn Write) -> 
             out,
             "price:            {} → {} {} {}",
             price.plan_id, price.provider_price_id, price.amount_minor, price.currency
+        )?;
+    }
+    Ok(())
+}
+
+/// `admin mail templates [--apply]`: the listmonk templates of every kind and
+/// language, created or updated by name, and the mapping for
+/// `DEVTAB_MAIL_LISTMONK_TEMPLATES`. Without `apply`, reads only.
+pub async fn mail_templates(
+    config: &Config,
+    apply: bool,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    use crate::mail::listmonk::{ApiToken, Listmonk};
+    use crate::mail::{MailSettings, templates};
+
+    let wanted = templates::all()?;
+    let instance = match &config.mail {
+        MailSettings::Listmonk(settings) => Some(Listmonk::new(
+            &settings.url,
+            &settings.api_user,
+            ApiToken::read(&settings.token_file)?,
+        )?),
+        _ if apply => bail!(
+            "--apply needs DEVTAB_MAIL=listmonk with DEVTAB_MAIL_LISTMONK_URL, _API_USER and \
+             _API_TOKEN_FILE"
+        ),
+        _ => None,
+    };
+    let existing = match &instance {
+        Some(listmonk) => listmonk.tx_templates().await?,
+        None => BTreeMap::default(),
+    };
+    let mut mapping = Vec::new();
+    for template in &wanted {
+        let found = existing.get(&template.name).copied();
+        let verb = match (found, apply) {
+            (Some(_), true) => "updated ",
+            (None, true) => "created ",
+            (Some(_), false) => "would update",
+            (None, false) => "would create",
+        };
+        let id = match (&instance, apply) {
+            (Some(listmonk), true) => Some(
+                listmonk
+                    .put_tx_template(found, &template.name, &template.subject, template.body)
+                    .await?,
+            ),
+            _ => found,
+        };
+        writeln!(
+            out,
+            "{verb} {} ({} chars){}",
+            template.name,
+            template.body.len(),
+            id.map(|id| format!(" #{id}")).unwrap_or_default()
+        )?;
+        if let Some(id) = id {
+            mapping.push(format!("{}.{}={id}", template.kind, template.locale));
+        }
+    }
+    if mapping.len() == wanted.len() {
+        writeln!(out, "DEVTAB_MAIL_LISTMONK_TEMPLATES={}", mapping.join(","))?;
+    } else if !apply {
+        writeln!(
+            out,
+            "dry run: nothing changed; --apply creates and updates them"
         )?;
     }
     Ok(())

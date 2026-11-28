@@ -902,6 +902,17 @@
         "properties": {
           "email": {
             "type": "string"
+          },
+          "locale": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Locale",
+                "description": "The language of the invitation's mail (English when absent)."
+              }
+            ]
           }
         },
         "additionalProperties": false

@@ -1,0 +1,11 @@
+{{- /* DevTab.Dev, trial-started (ru). Скелет: тексты ждут владельца. Data: .Tx.Data.site_url, plans_url, connect_url, sign_in_url, plan_name, key_hint, members, ends_on, days_left (api/src/mail/compose.rs); never the subscriber's own fields, which external mode leaves empty. */ -}}
+<!doctype html>
+<html lang="ru">
+  <body>
+    <h1>Пробный период DevTab.Dev начался</h1>
+    <p>Бесплатный пробный период {{ .Tx.Data.plan_name }} действует до {{ .Tx.Data.ends_on }}. Карта не нужна, и по окончании ничего не списывается.</p>
+    <p>Что даёт пробный период: [ждёт владельца: преимущества плана].</p>
+    <p><a href="{{ .Tx.Data.connect_url }}">Подключите расширение</a> из учётной записи или введите ключ, который заканчивается на {{ .Tx.Data.key_hint }}.</p>
+    <p><small>Вы получили это письмо из-за учётной записи DevTab.Dev. <a href="{{ .Tx.Data.site_url }}">DevTab.Dev</a></small></p>
+  </body>
+</html>

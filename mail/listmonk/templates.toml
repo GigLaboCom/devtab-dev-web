@@ -1,0 +1,45 @@
+# The transactional templates of listmonk, one per kind of mail and language
+# (api/src/mail/): the subject of each; the body is <kind>.<locale>.html next to
+# this file. `devtab-api admin mail templates` creates or updates them in an
+# instance (named "DevTab.Dev: <kind> (<locale>)") and prints the ids for
+# DEVTAB_MAIL_LISTMONK_TEMPLATES. Skeletons: the texts await the owner.
+
+[trial-started]
+en = "Your DevTab.Dev trial has started"
+ru = "Пробный период DevTab.Dev начался"
+
+[trial-ending]
+en = "Your DevTab.Dev trial ends in {{ .Tx.Data.days_left }} days"
+ru = "Пробный период DevTab.Dev закончится через {{ .Tx.Data.days_left }} дн."
+
+[trial-ended]
+en = "Your DevTab.Dev trial has ended"
+ru = "Пробный период DevTab.Dev закончился"
+
+[welcome]
+en = "Welcome to DevTab.Dev {{ .Tx.Data.plan_name }}"
+ru = "Добро пожаловать в DevTab.Dev {{ .Tx.Data.plan_name }}"
+
+[licence-added]
+en = "A DevTab.Dev licence was added to your account"
+ru = "В вашу учётную запись DevTab.Dev добавлена лицензия"
+
+[renewal-reminder]
+en = "Your DevTab.Dev subscription renews on {{ .Tx.Data.ends_on }}"
+ru = "Подписка DevTab.Dev продлится {{ .Tx.Data.ends_on }}"
+
+[payment-failed]
+en = "Your DevTab.Dev payment didn't go through"
+ru = "Оплата DevTab.Dev не прошла"
+
+[subscription-cancelled]
+en = "Your DevTab.Dev subscription is cancelled"
+ru = "Подписка DevTab.Dev отменена"
+
+[subscription-ended]
+en = "Your DevTab.Dev subscription has ended"
+ru = "Подписка DevTab.Dev закончилась"
+
+[team-invite]
+en = "You're invited to a DevTab.Dev team"
+ru = "Вас пригласили в команду DevTab.Dev"
