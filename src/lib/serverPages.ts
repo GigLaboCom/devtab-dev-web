@@ -31,6 +31,8 @@ const list = {
   // Buying, with or without an account, and the return from the payment page.
   checkout: { path: 'pro/checkout/', index: false, session: true, signIn: false, script: false },
   thanks: { path: 'pro/thanks/', index: false, session: true, signIn: false, script: false },
+  // The trial without a card: a signed-in person starts it.
+  trial: { path: 'pro/trial/', index: false, session: true, signIn: false, script: false },
 };
 
 export type ServerPageId = keyof typeof list;

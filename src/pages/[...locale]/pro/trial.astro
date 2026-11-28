@@ -1,0 +1,115 @@
+---
+/**
+ * /pro/trial/: the trial without a card, where the deployment offers one
+ * (`trialDays` of the plans; otherwise the page says none is offered). A
+ * trial needs an account, so that its address is confirmed and it is one per
+ * inbox: signed out, the page links to signing in and back; signed in, one
+ * form starts it. The form posts to this page (Astro's origin check and the
+ * `Origin` again, counted with the sign-in attempts per client address); the
+ * answer shows the trial's end, its key once, and the step to connect the
+ * extension. Personal: never cached, never indexed.
+ */
+import AuthCard from '../../../components/auth/AuthCard.astro';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { defaultLocale, fill, localeOfParam, messages } from '../../../i18n';
+import { plans } from '../../../lib/api/client';
+import { authConfig, enabledMethods } from '../../../lib/auth/config';
+import { allowAttempt, clientAddress, signInHref } from '../../../lib/auth/server';
+import { ui } from '../../../lib/auth/ui';
+import { type StartedTrial, startTrial } from '../../../lib/trial';
+
+export const prerender = false;
+
+const locale = localeOfParam(Astro.params.locale);
+// No page here: the server answers with the site's 404 page.
+if (!locale) return new Response(null, { status: 404 });
+const all = messages(locale).pages;
+const t = all.trial;
+Astro.response.headers.set('Cache-Control', 'no-store');
+
+const prefix = locale === defaultLocale ? '' : `/${locale}`;
+const here = `${prefix}/pro/trial/`;
+const person = Astro.locals.auth;
+const signInOn = authConfig() !== null && enabledMethods().size > 0;
+
+let error: string | undefined;
+let started: StartedTrial | undefined;
+if (Astro.request.method === 'POST') {
+  if (Astro.request.headers.get('origin') !== Astro.url.origin) return new Response(null, { status: 403 });
+  if (!person) {
+    error = 'signed-out';
+  } else if (!allowAttempt(clientAddress(Astro.request, Astro.clientAddress))) {
+    error = 'rate';
+  } else {
+    const result = await startTrial(Astro.locals, locale);
+    if (result.ok) started = result.trial;
+    else error = result.error;
+  }
+}
+
+const catalogue = started ? null : await plans(locale);
+const days = catalogue?.trialDays ?? null;
+const endsOn = started
+  ? new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(started.ends_at))
+  : '';
+const errors: Record<string, string> = {
+  used: t.errorUsed,
+  'not-eligible': t.errorNotEligible,
+  off: t.off,
+  'signed-out': t.errorSignedOut,
+  unavailable: t.errorUnavailable,
+  rate: all.signIn.errorRate,
+};
+const message = error ? errors[error] : undefined;
+---
+
+<BaseLayout locale={locale} page="trial">
+  {started && (
+    <AuthCard heading={t.startedHeading}>
+      <p role="status">{fill(t.startedNote, { date: endsOn })}</p>
+      <p class={`mt-5 ${ui.label}`}>{t.keyLabel}</p>
+      <p class="mt-1.5 rounded-md border border-border bg-muted px-3 py-2 font-mono text-sm break-all select-all">
+        {started.key}
+      </p>
+      <p class={`mt-1 ${ui.note}`}>{t.keyNote}</p>
+      <a href={`${prefix}/pro/connect/`} class={ui.primary}>
+        {t.connect}
+      </a>
+    </AuthCard>
+  )}
+  {!started && (
+    <AuthCard heading={t.heading} error={message}>
+      {catalogue === null && <p>{all.pro.unavailable}</p>}
+      {catalogue !== null && days === null && (
+        <>
+          <p>{t.off}</p>
+          <a href={`${prefix}/pro/`} class={ui.primary}>
+            {t.plans}
+          </a>
+        </>
+      )}
+      {days !== null && (
+        <>
+          <p>{fill(t.intro, { days: String(days) })}</p>
+          {person && (
+            <form method="post" action={here} class="mt-6">
+              <p class={ui.note}>{fill(t.signedInAs, { email: person.email ?? '' })}</p>
+              <button type="submit" class={ui.primary}>
+                {t.start}
+              </button>
+            </form>
+          )}
+          {!person && signInOn && (
+            <>
+              <p class={`mt-4 ${ui.note}`}>{t.signInNote}</p>
+              <a href={signInHref(locale, here)} class={ui.primary}>
+                {t.signIn}
+              </a>
+            </>
+          )}
+          {!person && !signInOn && <p class="mt-4">{all.signIn.unavailable}</p>}
+        </>
+      )}
+    </AuthCard>
+  )}
+</BaseLayout>

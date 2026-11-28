@@ -8,7 +8,7 @@
  * its button.
  */
 import BaseLayout from '../../../layouts/BaseLayout.astro';
-import { fill, localeOfParam, messages } from '../../../i18n';
+import { defaultLocale, fill, localeOfParam, messages } from '../../../i18n';
 import { plans } from '../../../lib/api/client';
 import { formatPrice } from '../../../lib/price';
 
@@ -61,6 +61,16 @@ const steps = (plan: (typeof cards)[number]) => {
   {catalogue === null && <p class="mt-4 text-lg">{t.unavailable}</p>}
   {catalogue !== null && cards.length === 0 && <p class="mt-4 text-lg">{t.empty}</p>}
   {cards.length > 0 && !open && <p class="mt-4 text-lg text-muted-foreground">{t.notOpen}</p>}
+  {catalogue?.trialDays != null && (
+    <p class="mt-6 flex flex-wrap items-center gap-4">
+      <span class="text-lg">{fill(t.trial, { days: String(catalogue.trialDays) })}</span>
+      <a
+        href={`${locale === defaultLocale ? '' : `/${locale}`}/pro/trial/`}
+        class="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:opacity-90">
+        {t.trialStart}
+      </a>
+    </p>
+  )}
   {groups.map(group => (
     <section aria-labelledby={group.heading ? `plans-${group.id}` : undefined} class="mt-10">
       {group.heading && (

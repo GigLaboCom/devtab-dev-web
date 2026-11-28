@@ -41,7 +41,18 @@ const pathOf = (locale: string, path: string) =>
 const urlOf = (locale: string, path: string) => new URL(pathOf(locale, path), origin).href;
 
 /** What the stub of the internal API answers, set by each test, and what Supabase Auth was asked. */
-const stub = { down: false, empty: false, available: [] as string[], asked: [] as string[], team: false };
+const stub = {
+  down: false,
+  empty: false,
+  available: [] as string[],
+  asked: [] as string[],
+  team: false,
+  /** The days of the trial the plans offer; null: none. */
+  trialDays: null as number | null,
+  /** How `POST /internal/trials` answers: started, or one of its refusals. */
+  trial: 'started' as 'started' | 'trial-used' | 'trial-not-eligible',
+  trialAsked: [] as { body: Record<string, unknown>; bearer: string }[],
+};
 
 /** The checkouts the stub of the internal API starts and shows. */
 const GUEST_CHECKOUT = '0b0b0b0b-0000-4000-8000-000000000001';
@@ -250,6 +261,23 @@ before(async () => {
       });
       return;
     }
+    if (url.pathname === '/internal/trials') {
+      let body = '';
+      request.on('data', chunk => (body += chunk));
+      request.on('end', () => {
+        const bearer = request.headers.authorization?.replace(/^Bearer /, '') ?? '';
+        stub.trialAsked.push({ body: body ? (JSON.parse(body) as Record<string, unknown>) : {}, bearer });
+        const [status, answer] =
+          bearer !== stubToken
+            ? [401, { error: 'unauthorized', message: 'no' }]
+            : stub.trial === 'started'
+              ? [201, { lid: 'lic_TRIAL', key: 'DTD-TRIA-LKEY-AAAA-BBBB-CCCC', ends_at: '2026-12-06T10:00:00Z' }]
+              : [409, { error: stub.trial, message: stub.trial }];
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(answer));
+      });
+      return;
+    }
     if (url.pathname.startsWith('/internal/checkouts')) {
       let body = '';
       request.on('data', chunk => (body += chunk));
@@ -277,7 +305,9 @@ before(async () => {
           ...(stub.team ? [teamPlan] : []),
         ];
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ ...fixture, locale: url.searchParams.get('locale'), plans }));
+    response.end(
+      JSON.stringify({ ...fixture, locale: url.searchParams.get('locale'), plans, trialDays: stub.trialDays }),
+    );
   });
   apiBase = `http://127.0.0.1:${await listen(api)}`;
   // Every method on: every page of signing in exists; buying without an account too.
@@ -1083,4 +1113,55 @@ test('an invite’s link signs the buyer in and lands on the purchase, with a pa
   assert.equal(used.location, '/ru/sign-in/?error=invite');
   const wording = await page('/ru/sign-in/?error=invite');
   assert.ok(wording.text.includes(ru.pages.signIn.errorInvite));
+});
+
+test('/pro/ offers the trial when there is one, and /pro/trial/ asks to sign in first', async () => {
+  Object.assign(stub, { down: false, empty: false, available: [], team: false, trialDays: 7 });
+  const offered = await page('/ru/pro/');
+  assert.ok(offered.text.includes(fill(ru.pages.pro.trial, { days: '7' })), offered.text);
+  assert.ok(hrefs(offered.html).includes('/ru/pro/trial/'));
+  const signedOut = await page('/ru/pro/trial/');
+  assert.ok(signedOut.text.includes(fill(ru.pages.trial.intro, { days: '7' })));
+  assert.deepEqual(actions(signedOut.html), [], 'no form without an account');
+  assert.ok(hrefs(signedOut.html).includes(`/ru/sign-in/?next=${encodeURIComponent('/ru/pro/trial/')}`));
+
+  stub.trialDays = null;
+  const none = await page('/pro/');
+  assert.ok(!hrefs(none.html).includes('/pro/trial/'), 'no trial, no offer');
+  const off = await page('/pro/trial/');
+  assert.ok(off.text.includes(en.pages.trial.off));
+});
+
+test('/pro/trial/ starts a signed-in person’s trial and shows its key once, or says why not', async () => {
+  Object.assign(stub, { down: false, empty: false, available: [], team: false, trialDays: 7, trial: 'started' });
+  stub.trialAsked.length = 0;
+  const jar = await signedInJar('203.0.113.50');
+  const offer = await page('/pro/trial/', jar.header);
+  assert.deepEqual(actions(offer.html), ['/pro/trial/']);
+  const start = (from: string) =>
+    fetch(`${base}/pro/trial/`, {
+      method: 'POST',
+      headers: {
+        origin: base,
+        cookie: jar.header,
+        'x-forwarded-for': from,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({}),
+    }).then(async r => text(await r.text()));
+  const started = await start('203.0.113.51');
+  assert.ok(
+    started.includes('DTD-TRIA-LKEY-AAAA-BBBB-CCCC') && started.includes(en.pages.trial.startedHeading),
+    started,
+  );
+  assert.ok(started.includes('December 6, 2026'), 'its end, in the page’s language');
+  assert.deepEqual(stub.trialAsked, [{ body: { locale: 'en' }, bearer: stubToken }]);
+
+  stub.trial = 'trial-used';
+  assert.ok((await start('203.0.113.52')).includes(en.pages.trial.errorUsed));
+  stub.trial = 'trial-not-eligible';
+  assert.ok((await start('203.0.113.53')).includes(en.pages.trial.errorNotEligible));
+  const foreign = await post('/pro/trial/', {}, '203.0.113.54', jar.header, 'https://elsewhere.example.invalid');
+  assert.equal(foreign.status, 403);
+  Object.assign(stub, { trialDays: null, trial: 'started' });
 });
