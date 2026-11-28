@@ -314,7 +314,7 @@ impl World {
 
     async fn clean(mut self) {
         sqlx::query(
-            "delete from app.jobs where kind = 'mail_licence' and (payload->>'licence')::uuid in
+            "delete from app.jobs where kind = 'mail' and (payload->'data'->>'licence')::uuid in
                (select id from app.licences where plan_id = $1)",
         )
         .bind(&self.plan)
@@ -1442,8 +1442,8 @@ impl World {
 
     async fn mail_jobs(&mut self, licence: Uuid) -> Vec<Value> {
         sqlx::query_scalar(
-            "select payload from app.jobs where kind = 'mail_licence'
-             and payload->>'licence' = $1::text and done_at is null",
+            "select payload from app.jobs where kind = 'mail'
+             and payload->'data'->>'licence' = $1::text and done_at is null",
         )
         .bind(licence)
         .fetch_all(&mut self.owner)
@@ -1621,15 +1621,19 @@ async fn a_guest_buyer_who_has_an_account_is_not_invited_and_a_licence_mail_wait
     assert_eq!(customers, 2, "a guest purchase brings its own customer");
     assert_eq!(
         world.mail_jobs(licence).await,
-        vec![json!({"licence": licence, "checkout": checkout})]
+        vec![json!({
+            "mail": "licence-added", "user": person, "locale": "en",
+            "data": {"licence": licence, "checkout": checkout, "plan": world.plan},
+        })],
+        "a mail of a kind, to a user, in a language, with record ids: no address"
     );
-    // The worker does not run it yet: it waits for the mail adapter.
+    // The worker does not run it yet: it waits for the mailer.
     let pool = support::api_pool(&world.url).await;
     let mut tx = pool.begin().await.unwrap();
     let due = jobs::claim_due(&mut *tx, now + Duration::days(1), 1000, &worker::RUNS)
         .await
         .unwrap();
-    assert!(due.iter().all(|job| job.kind != worker::MAIL_LICENCE));
+    assert!(due.iter().all(|job| job.kind != worker::MAIL));
     tx.rollback().await.unwrap();
     world.clean().await;
 }

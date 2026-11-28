@@ -22,12 +22,22 @@ use crate::store::{events, jobs};
 /// Processing a stored provider event: `{"event": <provider_events.id>}`.
 pub const PROCESS_EVENT: &str = "process_event";
 
-/// Mailing the buyer of a guest checkout who had an account already (and so
-/// got no invite) that the licence is in it:
-/// `{"licence": <licences.id>, "checkout": <checkouts.id>}`. Queued, not run
-/// yet: this worker does not claim it ([`RUNS`]) until the mail adapter
-/// exists, so these jobs wait in `app.jobs` for it.
-pub const MAIL_LICENCE: &str = "mail_licence";
+/// A mail of one kind to one user, in a language, with the data its
+/// template needs: `{"mail": <kind>, "user": <users.id>, "locale": "en"|"ru",
+/// "data": {…record ids…}}`. The address is read when it is sent (never kept
+/// in the queue), and the mailer (a provider behind one interface, the
+/// listmonk transactional API first) picks the template by kind and locale.
+/// Queued, not run yet: this worker does not claim it ([`RUNS`]) until the
+/// mailer exists, so these jobs wait in `app.jobs` for it.
+pub const MAIL: &str = "mail";
+
+/// The mail kinds queued so far, as [`MAIL`] jobs name them.
+pub mod mails {
+    /// A licence was added to an account that existed already (a guest
+    /// purchase by an address that has an account, which gets no invite):
+    /// data `{"licence": <licences.id>, "checkout": <checkouts.id>, "plan": <plan id>}`.
+    pub const LICENCE_ADDED: &str = "licence-added";
+}
 
 /// The kinds of jobs this worker runs; a job of any other kind waits.
 pub const RUNS: [&str; 1] = [PROCESS_EVENT];

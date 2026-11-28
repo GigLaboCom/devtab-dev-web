@@ -696,10 +696,13 @@ the lookups always come first, under an advisory lock on the inbox: a job
 tried again after a failure (Auth down, an answer lost) finds the user the
 first attempt made and invites nobody twice. The licence, the checkout
 (`user_id`, `buyer`) and the customer then belong to that user, and so does
-a team. A buyer who had an account gets no invite; a `mail_licence` job
-(`{"licence", "checkout"}`) records the mail they are owed, and waits in
-`app.jobs`: the worker claims only the kinds it runs, and the mail adapter,
-which will run it, is not built yet. A guest purchase cannot name the
+a team. A buyer who had an account gets no invite; the mail they are owed
+is queued as a `mail` job, a mail of a kind to a user in a language with the
+data its template needs (`{"mail": "licence-added", "user", "locale",
+"data": {"licence", "checkout", "plan"}}`; the address is read when it is
+sent, never kept in the queue). It waits in `app.jobs`: the worker claims
+only the kinds it runs, and the mailer that will run it (one interface, the
+listmonk transactional API its first provider) is not built yet. A guest purchase cannot name the
 account's customer, so a person may be the provider's customer more than
 once. Without the secret key, a paid guest checkout waits (its job retries).
 
@@ -736,8 +739,8 @@ Each subscription is handled under a transaction-scoped advisory lock, so two
 events of one purchase processed at once issue one licence. A failed job is
 tried again after 1, 5 and 30 minutes, 2, 6 and 24 hours, then given up and
 logged as an error with its event marked `failed`; an error that retrying
-cannot help is given up at once. Still to come: the mail with the key (and
-the `mail_licence` jobs), the trial, the daily reconciliations, changing
+cannot help is given up at once. Still to come: the mail with the key and
+the mailer (which sends the queued `mail` jobs), the trial, the daily reconciliations, changing
 plans and the customer portal.
 
 ### Connecting the extension

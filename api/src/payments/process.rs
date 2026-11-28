@@ -25,8 +25,8 @@
 //! invited by mail ([`Accounts`]), never invited twice. That happens inside the subscription's lock and the job's
 //! transaction, and the lookup comes first, so a job tried again after a
 //! failure finds the user the first attempt invited instead of inviting
-//! again. A buyer who had an account gets no invite; a `mail_licence` job is
-//! queued for them instead, which waits for the mail adapter.
+//! again. A buyer who had an account gets no invite; a `licence-added` mail
+//! is queued for them instead, which waits for the mailer.
 
 use sqlx::PgConnection;
 use time::{Duration, OffsetDateTime};
@@ -35,7 +35,7 @@ use uuid::Uuid;
 use super::reconcile::{Decision, LicenceState, LicenceStatus, reconcile};
 use super::{EventSource, ProviderError, Signal, SubscriptionSnapshot};
 use crate::accounts::{AccountError, Accounts, Invitation, canonical_email, normal_email};
-use crate::jobs::worker::MAIL_LICENCE;
+use crate::jobs::worker::{MAIL, mails};
 use crate::licence::key;
 use crate::store::licences::{NewLicence, SubscriptionLicence};
 use crate::store::{checkouts, customers, events, jobs, licences, plans, reveals, users};
@@ -311,7 +311,7 @@ async fn complete_open(
 /// The first licence of a paid subscription from our `checkout`: for the
 /// person who started it, or a guest checkout's buyer, found or invited now.
 /// A buyer who had an account gets no invite, and the mail that says the
-/// licence is in their account is queued (`mail_licence`).
+/// licence is in their account is queued (a `licence-added` mail).
 #[allow(clippy::too_many_arguments)]
 async fn issue_from_checkout(
     conn: &mut PgConnection,
@@ -340,11 +340,16 @@ async fn issue_from_checkout(
         .await?;
         if let Buyer::Existing(_) = buyer {
             // No invite for an address that has an account: the licence is in
-            // it. The mail that says so waits for the mail adapter.
+            // it. The mail that says so waits for the mailer.
             jobs::enqueue(
                 &mut *conn,
-                MAIL_LICENCE,
-                &serde_json::json!({ "licence": id, "checkout": checkout.id }),
+                MAIL,
+                &serde_json::json!({
+                    "mail": mails::LICENCE_ADDED,
+                    "user": buyer.user(),
+                    "locale": checkout.locale,
+                    "data": { "licence": id, "checkout": checkout.id, "plan": plan_id },
+                }),
                 now,
             )
             .await?;
