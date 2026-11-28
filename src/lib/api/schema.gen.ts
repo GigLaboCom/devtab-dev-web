@@ -24,6 +24,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/checkouts/guest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /internal/checkouts/guest`: starts a checkout of a plan without an
+         *     account, where the deployment allows it (`DEVTAB_GUEST_CHECKOUT`). The
+         *     provider asks the buyer for an address; when the payment is through, the
+         *     licence goes to that address's account, made and invited by mail if
+         *     there is none. The site limits how often one client may start one.
+         */
+        post: operations["start_guest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/checkouts/{id}": {
         parameters: {
             query?: never;
@@ -35,6 +58,26 @@ export interface paths {
         get: operations["read"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/checkouts/{id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /internal/checkouts/{id}/claim`: how a guest checkout went, for the
+         *     browser that started it (the secret its start answered).
+         */
+        post: operations["claim"];
         delete?: never;
         options?: never;
         head?: never;
@@ -148,6 +191,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description How a guest checkout's buyer got the account its licence is in.
+         * @enum {string}
+         */
+        BuyerAccount: "invited" | "existing";
+        /** @description The secret of a guest checkout, as the site kept it. */
+        CheckoutClaim: {
+            /** @description `claim` of the started guest checkout. */
+            claim: string;
+        };
         /** @description A checkout as its buyer sees it. */
         CheckoutState: {
             /**
@@ -196,6 +249,17 @@ export interface components {
             error: string;
             /** @description English text for logs and people. */
             message: string;
+        };
+        /** @description A guest checkout as the browser that started it sees it. */
+        GuestCheckoutState: {
+            account: null | components["schemas"]["BuyerAccount"];
+            /**
+             * @description As [`CheckoutState::key`]: the first time it is asked for, by this
+             *     browser or by the buyer's account, whichever comes first.
+             */
+            key: string | null;
+            key_hint: string | null;
+            status: components["schemas"]["CheckoutStatus"];
         };
         /** @description The process is up. */
         Health: {
@@ -348,6 +412,23 @@ export interface components {
             /** @description The provider's page (a hosted checkout); answer it with 303. */
             redirect_url?: string | null;
         };
+        /**
+         * @description A started guest checkout: as [`StartedCheckout`], with the secret that
+         *     reads it.
+         */
+        StartedGuestCheckout: {
+            /** Format: uuid */
+            checkout: string;
+            /**
+             * @description The secret that reads this checkout (`POST /internal/checkouts/{id}/claim`):
+             *     keep it in an `HttpOnly` cookie of the browser that started it, never
+             *     in an address or a page. Shown once; only its hash is stored.
+             */
+            claim: string;
+            embedded?: null | components["schemas"]["EmbeddedCheckout"];
+            /** @description The provider's page (a hosted checkout); answer it with 303. */
+            redirect_url?: string | null;
+        };
         /** @description A team's members. */
         Team: {
             /** @description The invited addresses, at most `members` − 1. */
@@ -432,6 +513,66 @@ export interface operations {
             };
         };
     };
+    start_guest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCheckout"];
+            };
+        };
+        responses: {
+            /** @description Started */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartedGuestCheckout"];
+                };
+            };
+            /** @description `guest-checkout-off`: not offered here */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `plan-unknown` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `plan-unavailable`: not sold now */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `guest-checkout-unavailable`: no Supabase secret key to invite the buyer with; `payments-unavailable`: no provider, or it did not start */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     read: {
         parameters: {
             query?: never;
@@ -463,6 +604,42 @@ export interface operations {
                 };
             };
             /** @description No such checkout of this person */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    claim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The checkout, the `ref` of the return address */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckoutClaim"];
+            };
+        };
+        responses: {
+            /** @description The checkout's state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestCheckoutState"];
+                };
+            };
+            /** @description No such guest checkout with this secret */
             404: {
                 headers: {
                     [name: string]: unknown;

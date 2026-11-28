@@ -1762,6 +1762,155 @@ async fn a_team_bought_without_an_account_belongs_to_its_buyer() {
     world.clean().await;
 }
 
+#[tokio::test]
+async fn a_guest_checkout_starts_without_an_account_and_its_browser_alone_sees_the_key() {
+    let Some(mut world) = World::new(true).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let (api, stand) = stand_in().await;
+    let (accounts, auth) = gotrue(&world.url).await;
+    let guest = Config {
+        guest_checkout: true,
+        ..Config::default()
+    };
+    let base = support::api_state(&world.url, shared(&clock), &guest).await;
+
+    // Off, or on without the key to invite with: refused, clearly.
+    let off = support::api_state(&world.url, shared(&clock), &Config::default())
+        .await
+        .with_payments(payments(&api))
+        .with_accounts(accounts.clone());
+    let body = json!({"plan": world.plan, "locale": "ru"});
+    let (status, answer) = call(
+        off,
+        "POST",
+        "/internal/checkouts/guest",
+        "",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(
+        (status, answer["error"].as_str()),
+        (StatusCode::FORBIDDEN, Some("guest-checkout-off"))
+    );
+    let keyless = base.clone().with_payments(payments(&api));
+    let (status, answer) = call(
+        keyless,
+        "POST",
+        "/internal/checkouts/guest",
+        "",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(
+        (status, answer["error"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("guest-checkout-unavailable")
+        )
+    );
+
+    let state = base.with_payments(payments(&api)).with_accounts(accounts);
+    let (status, started) = call(
+        state.clone(),
+        "POST",
+        "/internal/checkouts/guest",
+        "",
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{started}");
+    let checkout = Uuid::parse_str(started["checkout"].as_str().unwrap()).unwrap();
+    let claim = started["claim"].as_str().unwrap().to_owned();
+    assert!(claim.len() >= 43);
+    {
+        let sent = stand.checkouts.lock().unwrap();
+        let form = sent.last().unwrap();
+        assert!(
+            !form
+                .iter()
+                .any(|(key, _)| key == "customer" || key == "customer_email"),
+            "the provider asks the buyer for the address: {form:?}"
+        );
+        assert!(form.contains(&(
+            "success_url".to_owned(),
+            format!("https://web.example.invalid/ru/pro/thanks/?ref={checkout}")
+        )));
+    }
+    let row = world.checkout_row(checkout).await;
+    assert_eq!(row.get::<Option<Uuid>, _>("user_id"), None);
+    let stored: Vec<u8> = sqlx::query_scalar("select claim_hash from app.checkouts where id = $1")
+        .bind(checkout)
+        .fetch_one(&mut world.owner)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored,
+        devtab_api::licence::secret::hash(&claim),
+        "only its hash"
+    );
+
+    let path = format!("/internal/checkouts/{checkout}/claim");
+    let read = |claim: String| {
+        let (state, path) = (state.clone(), path.clone());
+        async move { call(state, "POST", &path, "", Some(json!({ "claim": claim }))).await }
+    };
+    let other = devtab_api::licence::secret::generate().unwrap().secret;
+    assert_eq!(read(other).await.0, StatusCode::NOT_FOUND, "another secret");
+    assert_eq!(read("short".to_owned()).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        read(claim.clone()).await,
+        (
+            StatusCode::OK,
+            json!({"status": "open", "key": null, "key_hint": null, "account": null})
+        )
+    );
+
+    // The payment arrives through the webhook and the worker.
+    let (sub, cus) = ids();
+    let now = clock.now();
+    *stand.email.lock().unwrap() = Some(World::new_email());
+    *stand.subscription.lock().unwrap() = Some(json!({
+        "id": sub, "status": "active", "customer": cus, "cancel_at_period_end": false,
+        "metadata": {"devtab_checkout": checkout.to_string()},
+        "items": {"data": [{"price": {"id": world.price}, "current_period_end": (now + Duration::days(30)).unix_timestamp()}]},
+        "latest_invoice": {"id": "in_1", "status": "paid"},
+    }));
+    let session_id: String =
+        sqlx::query_scalar("select provider_checkout_id from app.checkouts where id = $1")
+            .bind(checkout)
+            .fetch_one(&mut world.owner)
+            .await
+            .unwrap();
+    let event = json!({
+        "id": format!("evt_{}", Uuid::new_v4().simple()), "object": "event",
+        "type": "checkout.session.completed", "created": now.unix_timestamp(),
+        "api_version": stripe::DEFAULT_API_VERSION, "livemode": false,
+        "data": {"object": session_of(checkout, &session_id, &cus, &sub)},
+    })
+    .to_string();
+    let (status, _) = deliver(state.clone(), "stripe", &event, &signed(&event, now)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(worker::run_due(&state).await.unwrap() >= 1);
+    world.adopt(&auth);
+    assert_eq!(auth.asked.lock().unwrap().len(), 1);
+
+    let (status, seen) = read(claim.clone()).await;
+    assert_eq!(
+        (status, &seen["status"]),
+        (StatusCode::OK, &json!("completed")),
+        "{seen}"
+    );
+    assert_eq!(seen["account"], "invited");
+    let key = seen["key"].as_str().expect("the key, the first time");
+    assert!(key.starts_with("DTD-"));
+    let (_, again) = read(claim).await;
+    assert_eq!(again["key"], Value::Null, "only once");
+    assert_eq!(again["key_hint"], seen["key_hint"]);
+    world.clean().await;
+}
+
 /// A completed Checkout Session of ours whose id is `id`.
 fn session_of(checkout: Uuid, id: &str, customer: &str, subscription: &str) -> Value {
     let mut object = session(checkout, customer, subscription);

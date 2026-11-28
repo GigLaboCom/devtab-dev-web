@@ -82,6 +82,77 @@
         ]
       }
     },
+    "/internal/checkouts/guest": {
+      "post": {
+        "tags": [
+          "purchase"
+        ],
+        "summary": "`POST /internal/checkouts/guest`: starts a checkout of a plan without an\naccount, where the deployment allows it (`DEVTAB_GUEST_CHECKOUT`). The\nprovider asks the buyer for an address; when the payment is through, the\nlicence goes to that address's account, made and invited by mail if\nthere is none. The site limits how often one client may start one.",
+        "operationId": "start_guest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewCheckout"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedGuestCheckout"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`guest-checkout-off`: not offered here",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`plan-unknown`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`plan-unavailable`: not sold now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`guest-checkout-unavailable`: no Supabase secret key to invite the buyer with; `payments-unavailable`: no provider, or it did not start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/checkouts/{id}": {
       "get": {
         "tags": [
@@ -138,6 +209,59 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/internal/checkouts/{id}/claim": {
+      "post": {
+        "tags": [
+          "purchase"
+        ],
+        "summary": "`POST /internal/checkouts/{id}/claim`: how a guest checkout went, for the\nbrowser that started it (the secret its start answered).",
+        "operationId": "claim",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The checkout, the `ref` of the return address",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutClaim"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The checkout's state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuestCheckoutState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such guest checkout with this secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/internal/healthz": {
@@ -575,6 +699,28 @@
   },
   "components": {
     "schemas": {
+      "BuyerAccount": {
+        "type": "string",
+        "description": "How a guest checkout's buyer got the account its licence is in.",
+        "enum": [
+          "invited",
+          "existing"
+        ]
+      },
+      "CheckoutClaim": {
+        "type": "object",
+        "description": "The secret of a guest checkout, as the site kept it.",
+        "required": [
+          "claim"
+        ],
+        "properties": {
+          "claim": {
+            "type": "string",
+            "description": "`claim` of the started guest checkout."
+          }
+        },
+        "additionalProperties": false
+      },
       "CheckoutState": {
         "type": "object",
         "description": "A checkout as its buyer sees it.",
@@ -692,6 +838,45 @@
           "message": {
             "type": "string",
             "description": "English text for logs and people."
+          }
+        }
+      },
+      "GuestCheckoutState": {
+        "type": "object",
+        "description": "A guest checkout as the browser that started it sees it.",
+        "required": [
+          "status",
+          "key",
+          "key_hint",
+          "account"
+        ],
+        "properties": {
+          "account": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuyerAccount",
+                "description": "Once paid: whether the buyer was invited or had an account."
+              }
+            ]
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "As [`CheckoutState::key`]: the first time it is asked for, by this\nbrowser or by the buyer's account, whichever comes first."
+          },
+          "key_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/CheckoutStatus"
           }
         }
       },
@@ -1041,6 +1226,42 @@
           "checkout": {
             "type": "string",
             "format": "uuid"
+          },
+          "embedded": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EmbeddedCheckout",
+                "description": "The form (an embedded checkout)."
+              }
+            ]
+          },
+          "redirect_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The provider's page (a hosted checkout); answer it with 303."
+          }
+        }
+      },
+      "StartedGuestCheckout": {
+        "type": "object",
+        "description": "A started guest checkout: as [`StartedCheckout`], with the secret that\nreads it.",
+        "required": [
+          "checkout",
+          "claim"
+        ],
+        "properties": {
+          "checkout": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "claim": {
+            "type": "string",
+            "description": "The secret that reads this checkout (`POST /internal/checkouts/{id}/claim`):\nkeep it in an `HttpOnly` cookie of the browser that started it, never\nin an address or a page. Shown once; only its hash is stored."
           },
           "embedded": {
             "oneOf": [

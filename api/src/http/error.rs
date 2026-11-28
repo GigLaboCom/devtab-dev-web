@@ -71,6 +71,14 @@ pub enum AppError {
     /// No payment provider is configured, or it could not start a checkout.
     #[error("payments are unavailable")]
     PaymentsUnavailable,
+    /// This deployment does not sell without an account
+    /// (`DEVTAB_GUEST_CHECKOUT`).
+    #[error("Buying without an account is not offered here: sign in to buy.")]
+    GuestCheckoutOff,
+    /// Guest checkout is on, but the API cannot invite buyers (no Supabase
+    /// secret key).
+    #[error("Buying without an account is not available now: sign in to buy.")]
+    GuestCheckoutUnavailable,
     /// Details are logged, never sent to the client.
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -86,10 +94,14 @@ impl AppError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
-            Self::Unavailable | Self::UnavailableFor { .. } | Self::PaymentsUnavailable => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
-            Self::Forbidden(_) | Self::KeyBlocked | Self::LicenceInactive => StatusCode::FORBIDDEN,
+            Self::Unavailable
+            | Self::UnavailableFor { .. }
+            | Self::PaymentsUnavailable
+            | Self::GuestCheckoutUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Forbidden(_)
+            | Self::KeyBlocked
+            | Self::LicenceInactive
+            | Self::GuestCheckoutOff => StatusCode::FORBIDDEN,
             Self::SeatLimit | Self::PlanUnavailable | Self::NotATeam | Self::TeamFull => {
                 StatusCode::CONFLICT
             }
@@ -114,6 +126,8 @@ impl AppError {
             Self::PlanUnknown => "plan-unknown",
             Self::PlanUnavailable => "plan-unavailable",
             Self::PaymentsUnavailable => "payments-unavailable",
+            Self::GuestCheckoutOff => "guest-checkout-off",
+            Self::GuestCheckoutUnavailable => "guest-checkout-unavailable",
             Self::NoLicence => "no-licence",
             Self::NotATeam => "not-a-team",
             Self::TeamFull => "team-full",
@@ -211,6 +225,20 @@ mod tests {
         assert_eq!(response.headers()[WWW_AUTHENTICATE], "Bearer");
         let error = AppError::Forbidden("account blocked".to_owned());
         assert_eq!((error.status().as_u16(), error.code()), (403, "forbidden"));
+    }
+
+    #[test]
+    fn a_guest_checkout_that_is_off_or_cannot_invite_says_which() {
+        let off = AppError::GuestCheckoutOff;
+        assert_eq!(
+            (off.status().as_u16(), off.code()),
+            (403, "guest-checkout-off")
+        );
+        let keyless = AppError::GuestCheckoutUnavailable;
+        assert_eq!(
+            (keyless.status().as_u16(), keyless.code()),
+            (503, "guest-checkout-unavailable")
+        );
     }
 
     #[test]

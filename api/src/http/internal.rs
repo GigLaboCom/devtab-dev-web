@@ -99,7 +99,9 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         .route("/internal/plans", get(plans::internal_plans))
         .route("/internal/me", get(me))
         .route("/internal/checkouts", post(checkouts::start))
+        .route("/internal/checkouts/guest", post(checkouts::start_guest))
         .route("/internal/checkouts/{id}", get(checkouts::read))
+        .route("/internal/checkouts/{id}/claim", post(checkouts::claim))
         .route("/internal/licences/connect", post(connect::connect))
         .route(
             "/internal/licences/{lid}/members",
@@ -125,7 +127,9 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         plans::internal_plans,
         me,
         checkouts::start,
+        checkouts::start_guest,
         checkouts::read,
+        checkouts::claim,
         connect::connect,
         members::list,
         members::invite,
@@ -149,6 +153,10 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         checkouts::EmbeddedCheckout,
         checkouts::CheckoutState,
         checkouts::CheckoutStatus,
+        checkouts::StartedGuestCheckout,
+        checkouts::CheckoutClaim,
+        checkouts::GuestCheckoutState,
+        checkouts::BuyerAccount,
         connect::ConnectRequest,
         connect::Connected,
         members::Team,
@@ -178,7 +186,9 @@ mod tests {
             paths,
             [
                 "/internal/checkouts",
+                "/internal/checkouts/guest",
                 "/internal/checkouts/{id}",
+                "/internal/checkouts/{id}/claim",
                 "/internal/healthz",
                 "/internal/licences/connect",
                 "/internal/licences/{lid}/members",
