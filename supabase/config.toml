@@ -122,6 +122,15 @@ content_path = "./supabase/templates/sign_in.html"
 subject = "{{ if eq (print .Data.locale) \"ru\" }}Новый пароль для DevTab.Dev{{ else }}A new password for DevTab.Dev{{ end }}"
 content_path = "./supabase/templates/recovery.html"
 
+# A purchase made without an account: the API invites the buyer's new
+# account (POST /auth/v1/invite with the project's secret key) once the
+# payment is through. The mail's button is the site's /auth/callback/ on
+# site_url with the token's hash; the callback decides where to go. Its
+# texts follow the user metadata the API sets (`locale`, `team`).
+[auth.email.template.invite]
+subject = "{{ if eq (print .Data.locale) \"ru\" }}Ваш DevTab.Dev {{ if .Data.team }}Team{{ else }}Pro{{ end }} готов{{ else }}Your DevTab.Dev {{ if .Data.team }}Team{{ else }}Pro{{ end }} is ready{{ end }}"
+content_path = "./supabase/templates/invite.html"
+
 # Who sends Auth's mails. Locally none leaves the machine: every mail goes to
 # the mail catcher, so this is off. A stack that sends real mail turns it on
 # and names its server and sender in the environment, never in this file:
