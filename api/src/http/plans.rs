@@ -194,6 +194,7 @@ pub async fn internal_plans(
         query.map_err(|_| AppError::BadRequest("locale is `en` or `ru`".to_owned()))?;
     let locale = query.locale.unwrap_or_default().code();
     let rows = load(&state).await?;
-    let body = catalogue::site(&rows, &state.catalogue, locale, state.clock.now());
+    let mut body = catalogue::site(&rows, &state.catalogue, locale, state.clock.now());
+    body.trial_days = state.trial.as_ref().map(|trial| trial.days);
     answer(&body, &headers, None)
 }

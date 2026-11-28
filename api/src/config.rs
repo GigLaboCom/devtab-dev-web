@@ -18,6 +18,7 @@ use crate::mail::{MailSchedule, MailSettings};
 use crate::payments;
 use crate::payments::stripe::{self, CheckoutUi, StripeMode, StripeSettings};
 use crate::plans::catalogue::CatalogueSettings;
+use crate::trial::TrialSettings;
 
 /// Deployment environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +131,9 @@ pub struct Config {
     pub mail: MailSettings,
     /// When the reminders go out.
     pub mail_schedule: MailSchedule,
+    /// The trial without a card (`DEVTAB_TRIAL_DAYS`, `DEVTAB_TRIAL_PLAN`);
+    /// none: no trial is offered.
+    pub trial: Option<TrialSettings>,
 }
 
 /// Where the access tokens of signed-in people are checked.
@@ -169,6 +173,7 @@ impl fmt::Debug for Config {
             .field("supabase_secret_key_file", &self.supabase_secret_key_file)
             .field("mail", &self.mail)
             .field("mail_schedule", &self.mail_schedule)
+            .field("trial", &self.trial)
             .finish()
     }
 }
@@ -217,6 +222,7 @@ impl Default for Config {
             supabase_secret_key_file: None,
             mail: MailSettings::Off,
             mail_schedule: MailSchedule::default(),
+            trial: None,
         }
     }
 }
@@ -654,6 +660,7 @@ impl Config {
         config.read_auth(&get, &mut problems);
         config.read_accounts(&get, &mut problems);
         config.read_mail(&get, &mut problems);
+        config.read_trial(&get, &mut problems);
 
         if let Some(filter) = get("DEVTAB_LOG") {
             match EnvFilter::try_new(&filter) {
@@ -834,6 +841,50 @@ impl Config {
         }
         config.mail_schedule.renewal_remind_days =
             whole(get, "DEVTAB_MAIL_RENEWAL_REMIND_DAYS", (7, 1, 60), problems);
+    }
+
+    /// The trial without a card: its length, 7 to 14 days, and its plan.
+    fn read_trial(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        let plan = get("DEVTAB_TRIAL_PLAN");
+        let Some(text) = get("DEVTAB_TRIAL_DAYS") else {
+            if plan.is_some() {
+                problems.push("DEVTAB_TRIAL_PLAN needs DEVTAB_TRIAL_DAYS".to_owned());
+            }
+            return;
+        };
+        let days = match text.parse::<u32>() {
+            Ok(days) if (7..=14).contains(&days) => days,
+            _ => {
+                problems.push(format!(
+                    "DEVTAB_TRIAL_DAYS must be a whole number of days from 7 to 14, got `{text}`"
+                ));
+                return;
+            }
+        };
+        let Some(plan) = plan.filter(|p| {
+            (1..=64).contains(&p.len())
+                && p.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        }) else {
+            problems.push(
+                "DEVTAB_TRIAL_DAYS needs DEVTAB_TRIAL_PLAN: the id of the plan a trial gives, such \
+                 as pro-monthly"
+                    .to_owned(),
+            );
+            return;
+        };
+        if let Some(late) = config
+            .mail_schedule
+            .trial_remind_days
+            .iter()
+            .find(|d| **d >= days)
+        {
+            problems.push(format!(
+                "DEVTAB_MAIL_TRIAL_REMIND_DAYS has {late}, not fewer than the trial's {days} days"
+            ));
+        }
+        config.trial = Some(TrialSettings { days, plan });
     }
 
     /// The signing key's file and id, and in `dev` the developer's own key list.
@@ -1533,6 +1584,45 @@ mod tests {
         ])
         .unwrap_err();
         assert!(err.0.iter().any(|p| p.contains("DEVTAB_MAIL=log")), "{err}");
+    }
+
+    #[test]
+    fn a_trial_is_7_to_14_days_of_a_named_plan() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert_eq!(config.trial, None, "off unless set");
+        for days in ["7", "14"] {
+            let config = load(&[
+                ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+                ("DEVTAB_TRIAL_DAYS", days),
+                ("DEVTAB_TRIAL_PLAN", "pro-monthly"),
+            ])
+            .unwrap();
+            assert_eq!(config.trial.map(|t| t.plan), Some("pro-monthly".to_owned()));
+        }
+        for days in ["6", "15", "0", "ten"] {
+            let err = load(&[
+                ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+                ("DEVTAB_TRIAL_DAYS", days),
+                ("DEVTAB_TRIAL_PLAN", "pro-monthly"),
+            ])
+            .unwrap_err();
+            assert!(err.0[0].contains("from 7 to 14"), "{days}: {err}");
+        }
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_TRIAL_DAYS", "7"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "7,3"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 1, "no plan: {err}");
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_TRIAL_DAYS", "7"),
+            ("DEVTAB_TRIAL_PLAN", "pro-monthly"),
+            ("DEVTAB_MAIL_TRIAL_REMIND_DAYS", "7,3"),
+        ])
+        .unwrap_err();
+        assert!(err.0[0].contains("not fewer than"), "{err}");
     }
 
     #[test]

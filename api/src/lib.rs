@@ -17,6 +17,7 @@ pub mod plans;
 pub mod state;
 pub mod store;
 pub mod telemetry;
+pub mod trial;
 
 use axum::Router;
 pub use config::Config;

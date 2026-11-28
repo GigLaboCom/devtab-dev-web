@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.licences set status = 'ended', ended_at = $2\n         where user_id = $1 and kind = 'trial' and status = 'active'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "14dd7cbf7ecff062c44a0f4eab62947a812c8c08cd815ce9105d590da6cf0adb"
+}

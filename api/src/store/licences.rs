@@ -345,6 +345,17 @@ pub async fn find_for_mail(
     .await
 }
 
+/// Whether the user ever had a paid licence, whatever became of it.
+pub async fn ever_paid(db: impl PgExecutor<'_>, user_id: Uuid) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"select exists (select 1 from app.licences
+           where user_id = $1 and kind in ('subscription', 'one_time')) as "exists!""#,
+        user_id,
+    )
+    .fetch_one(db)
+    .await
+}
+
 /// Whether the user has a paid licence that is active now.
 pub async fn has_active_paid(db: impl PgExecutor<'_>, user_id: Uuid) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
@@ -355,6 +366,25 @@ pub async fn has_active_paid(db: impl PgExecutor<'_>, user_id: Uuid) -> Result<b
     )
     .fetch_one(db)
     .await
+}
+
+/// Ends the user's trials still running (a purchase replaces them): their
+/// installations' next check says `ended`, and connecting from the account
+/// picks the paid licence. How many ended.
+pub async fn end_trials_of(
+    db: impl PgExecutor<'_>,
+    user_id: Uuid,
+    now: OffsetDateTime,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query!(
+        "update app.licences set status = 'ended', ended_at = $2
+         where user_id = $1 and kind = 'trial' and status = 'active'",
+        user_id,
+        now,
+    )
+    .execute(db)
+    .await
+    .map(|done| done.rows_affected())
 }
 
 /// The language of the licence's mails.

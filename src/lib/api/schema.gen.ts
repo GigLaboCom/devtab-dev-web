@@ -187,6 +187,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/trials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /internal/trials`. */
+        post: operations["start_trial"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -306,6 +323,11 @@ export interface components {
             /** @description The plan's id, such as `pro-monthly`. */
             plan: string;
         };
+        /** @description A trial to start. */
+        NewTrial: {
+            /** @description The language of the trial's mails. */
+            locale?: components["schemas"]["Locale"];
+        };
         /** @description A plan as its card shows it. */
         Plan: {
             /** @description At most 24 characters. */
@@ -376,6 +398,12 @@ export interface components {
             plans: components["schemas"]["SitePlan"][];
             /**
              * Format: int32
+             * @description The days of the trial without a card a signed-in person may start
+             *     (`POST /internal/trials`); null when none is offered.
+             */
+            trialDays: number | null;
+            /**
+             * Format: int32
              * @description The format version, 1.
              */
             v: number;
@@ -429,6 +457,15 @@ export interface components {
             embedded?: null | components["schemas"]["EmbeddedCheckout"];
             /** @description The provider's page (a hosted checkout); answer it with 303. */
             redirect_url?: string | null;
+        };
+        /** @description A started trial. */
+        StartedTrial: {
+            /** @description When the trial ends, RFC 3339. */
+            ends_at: string;
+            /** @description The licence key, shown only in this answer. */
+            key: string;
+            /** @description The licence's id. */
+            lid: string;
         };
         /** @description A team's members. */
         Team: {
@@ -987,6 +1024,57 @@ export interface operations {
             };
             /** @description The database cannot be reached */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    start_trial: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewTrial"];
+            };
+        };
+        responses: {
+            /** @description Started */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartedTrial"];
+                };
+            };
+            /** @description No access token, or one that does not pass */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `trial-off`: no trial is offered here */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description `trial-used`: this inbox had one (any spelling, any account); `trial-not-eligible`: the account had a paid licence */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

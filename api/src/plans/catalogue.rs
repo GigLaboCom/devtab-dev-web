@@ -177,6 +177,10 @@ pub struct SiteCatalogue {
     pub locale: String,
     /// In the order of the cards.
     pub plans: Vec<SitePlan>,
+    /// The days of the trial without a card a signed-in person may start
+    /// (`POST /internal/trials`); null when none is offered.
+    #[schema(required = true)]
+    pub trial_days: Option<u32>,
 }
 
 /// A plan's card in `locale` (else English) and whether it can be sold now;
@@ -309,6 +313,7 @@ pub fn site(
         manage_url: manage_url(settings),
         locale: locale.to_owned(),
         plans,
+        trial_days: None,
     }
 }
 

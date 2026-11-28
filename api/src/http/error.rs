@@ -79,6 +79,15 @@ pub enum AppError {
     /// secret key).
     #[error("Buying without an account is not available now: sign in to buy.")]
     GuestCheckoutUnavailable,
+    /// This deployment offers no trial.
+    #[error("No trial is offered here.")]
+    TrialOff,
+    /// This inbox had a trial already (any spelling, any account).
+    #[error("This e-mail inbox has had a trial already.")]
+    TrialUsed,
+    /// The account had a paid licence, or has no address.
+    #[error("A trial is for those who have not bought a licence.")]
+    TrialNotEligible,
     /// Details are logged, never sent to the client.
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -101,10 +110,14 @@ impl AppError {
             Self::Forbidden(_)
             | Self::KeyBlocked
             | Self::LicenceInactive
-            | Self::GuestCheckoutOff => StatusCode::FORBIDDEN,
-            Self::SeatLimit | Self::PlanUnavailable | Self::NotATeam | Self::TeamFull => {
-                StatusCode::CONFLICT
-            }
+            | Self::GuestCheckoutOff
+            | Self::TrialOff => StatusCode::FORBIDDEN,
+            Self::SeatLimit
+            | Self::PlanUnavailable
+            | Self::NotATeam
+            | Self::TeamFull
+            | Self::TrialUsed
+            | Self::TrialNotEligible => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -128,6 +141,9 @@ impl AppError {
             Self::PaymentsUnavailable => "payments-unavailable",
             Self::GuestCheckoutOff => "guest-checkout-off",
             Self::GuestCheckoutUnavailable => "guest-checkout-unavailable",
+            Self::TrialOff => "trial-off",
+            Self::TrialUsed => "trial-used",
+            Self::TrialNotEligible => "trial-not-eligible",
             Self::NoLicence => "no-licence",
             Self::NotATeam => "not-a-team",
             Self::TeamFull => "team-full",
@@ -239,6 +255,17 @@ mod tests {
             (keyless.status().as_u16(), keyless.code()),
             (503, "guest-checkout-unavailable")
         );
+    }
+
+    #[test]
+    fn a_trial_that_is_off_used_or_not_for_this_person_says_which() {
+        for (error, status, code) in [
+            (AppError::TrialOff, 403, "trial-off"),
+            (AppError::TrialUsed, 409, "trial-used"),
+            (AppError::TrialNotEligible, 409, "trial-not-eligible"),
+        ] {
+            assert_eq!((error.status().as_u16(), error.code()), (status, code));
+        }
     }
 
     #[test]

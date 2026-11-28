@@ -346,6 +346,11 @@ async fn issue_from_checkout(
     )
     .await?;
     licences::set_locale(&mut *conn, id, &checkout.locale).await?;
+    // A purchase replaces a running trial.
+    let trials = licences::end_trials_of(&mut *conn, owner, now).await?;
+    if trials > 0 {
+        tracing::info!(trials, "a purchase ended the buyer's trial");
+    }
     // One mail for the purchase: an address that had an account gets no
     // invite, so it learns that the licence is in its account; everyone else
     // is welcomed (an invited buyer's invite is Supabase Auth's own mail).

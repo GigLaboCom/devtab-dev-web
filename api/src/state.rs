@@ -15,6 +15,7 @@ use crate::mail::{MailSchedule, Mailer};
 use crate::payments::Payments;
 use crate::plans::catalogue::CatalogueSettings;
 use crate::store::Store;
+use crate::trial::TrialSettings;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -45,6 +46,8 @@ pub struct AppState {
     pub mailer: Option<Arc<dyn Mailer>>,
     /// When the reminders go out.
     pub mail_schedule: Arc<MailSchedule>,
+    /// The trial without a card; none: not offered.
+    pub trial: Option<Arc<TrialSettings>>,
 }
 
 impl AppState {
@@ -64,6 +67,7 @@ impl AppState {
             accounts: None,
             mailer: None,
             mail_schedule: Arc::new(config.mail_schedule.clone()),
+            trial: config.trial.clone().map(Arc::new),
         }
     }
 

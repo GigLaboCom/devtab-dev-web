@@ -29,6 +29,7 @@ use devtab_api::auth::Verifier;
 use devtab_api::clock::{Clock as _, ManualClock, SharedClock};
 use devtab_api::jobs::worker;
 use devtab_api::licence::signer;
+use devtab_api::mail::MailKind;
 use devtab_api::payments::process::{self, ProcessError, Processed};
 use devtab_api::payments::stripe::keys::{ApiKey, WebhookSecret};
 use devtab_api::payments::stripe::{
@@ -1974,6 +1975,25 @@ async fn a_guest_buyer_is_found_by_the_exact_address_else_by_the_same_inbox() {
 
 // ---- the trial and the mails ----
 
+/// A mailer that keeps what it was given.
+#[derive(Debug, Default)]
+struct Recorder {
+    sent: Mutex<Vec<devtab_api::mail::Mail>>,
+}
+
+impl devtab_api::mail::Mailer for Recorder {
+    fn name(&self) -> &'static str {
+        "recorder"
+    }
+
+    fn send<'a>(&'a self, mail: &'a devtab_api::mail::Mail) -> devtab_api::mail::MailFuture<'a> {
+        Box::pin(async move {
+            self.sent.lock().unwrap().push(mail.clone());
+            Ok(())
+        })
+    }
+}
+
 impl World {
     /// The mail jobs of a licence: kind, when due, done or not.
     async fn mails_of(&mut self, licence: Uuid) -> Vec<(String, OffsetDateTime, bool)> {
@@ -1998,6 +2018,24 @@ impl World {
         .await
         .unwrap()
     }
+
+    /// A person with this address, removed by `clean`.
+    async fn person_at(&mut self, email: &str) -> Uuid {
+        let id = support::insert_auth_user(&mut self.owner, email).await;
+        self.people.push(id);
+        id
+    }
+
+    async fn clean_trials(&mut self) {
+        sqlx::query(
+            "delete from app.trial_inboxes where licence_id in
+               (select id from app.licences where plan_id = $1)",
+        )
+        .bind(&self.plan)
+        .execute(&mut self.owner)
+        .await
+        .unwrap();
+    }
 }
 
 /// The mail a job's payload makes now, as the worker would see it.
@@ -2015,6 +2053,242 @@ async fn composed(
         devtab_api::mail::compose::Composed::Send(mail) => Some(mail),
         devtab_api::mail::compose::Composed::Skip(_) => None,
     }
+}
+
+fn trial_config(plan: &str) -> Config {
+    Config {
+        trial: Some(devtab_api::trial::TrialSettings {
+            days: 7,
+            plan: plan.to_owned(),
+        }),
+        ..Config::default()
+    }
+}
+
+#[tokio::test]
+async fn a_trial_is_once_per_inbox_never_after_a_purchase_and_ends_by_itself() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let now = clock.now();
+    let keys = keys();
+    let verifier = || {
+        Verifier::fixed(
+            &json!({"keys": [keys.jwk]}),
+            ISSUER.to_owned(),
+            shared(&clock),
+        )
+    };
+    let state = support::api_state(&world.url, shared(&clock), &trial_config(&world.plan))
+        .await
+        .with_auth(verifier());
+    let tag = Uuid::new_v4().simple().to_string();
+    let first = world.person_at(&format!("ab{tag}@gmail.com")).await;
+    let same_inbox = world
+        .person_at(&format!("A.B{tag}+again@googlemail.com"))
+        .await;
+    let buyer = world.person().await;
+    let start = |user: Uuid| {
+        let (state, token) = (state.clone(), token(&keys, user, &clock));
+        async move {
+            call(
+                state,
+                "POST",
+                "/internal/trials",
+                &token,
+                Some(json!({"locale": "ru"})),
+            )
+            .await
+        }
+    };
+
+    // Off: refused.
+    let off = support::api_state(&world.url, shared(&clock), &Config::default())
+        .await
+        .with_auth(verifier());
+    let (status, body) = call(
+        off,
+        "POST",
+        "/internal/trials",
+        &token(&keys, first, &clock),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::FORBIDDEN, Some("trial-off"))
+    );
+
+    let (status, body) = start(first).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert!(body["key"].as_str().unwrap().starts_with("DTD-"));
+    let lid = body["lid"].as_str().unwrap().to_owned();
+    let row = devtab_api::store::licences::find_by_lid(&mut world.owner, &lid)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (row.kind.as_str(), row.seats, row.user_id),
+        ("trial", 2, Some(first))
+    );
+    let end = row.paid_until.unwrap();
+    assert_eq!((end - now).whole_days(), 7);
+    // The extension reads it like any licence with an end: active now, not after.
+    let spans = devtab_api::licence::LicenceSettings::default().spans;
+    let entitlement = devtab_api::licence::entitlement(&row);
+    assert!(entitlement.is_active_at(now.unix_timestamp(), &spans));
+    assert!(!entitlement.is_active_at((end + Duration::minutes(1)).unix_timestamp(), &spans));
+    assert_eq!(entitlement.term, None, "no payment grace");
+
+    let mails = world.mails_of(row.id).await;
+    let kinds: Vec<(&str, i64)> = mails
+        .iter()
+        .map(|(kind, at, _)| (kind.as_str(), (end - *at).whole_days()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("trial-started", 7),
+            ("trial-ending", 3),
+            ("trial-ending", 1),
+            ("trial-ended", 0)
+        ]
+    );
+    let started = world.payload_of(row.id, "trial-started").await;
+    let mail = composed(&world, &started, now).await.expect("sent");
+    assert_eq!(mail.locale, "ru");
+    assert_eq!(mail.data["days_left"], "7");
+    assert_eq!(
+        mail.data["connect_url"],
+        "https://web.example.invalid/ru/pro/connect/"
+    );
+
+    // Again, or another spelling of the same inbox: refused.
+    for user in [first, same_inbox] {
+        let (status, body) = start(user).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::CONFLICT, Some("trial-used"))
+        );
+    }
+    // After a purchase: refused.
+    let checkout = world.checkout(buyer, now).await;
+    let (sub, cus) = ids();
+    let double = Double::default();
+    double.set(world.snapshot(&sub, &cus, now + Duration::days(30)));
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session(checkout, &cus, &sub),
+            now,
+        )
+        .await;
+    world.process(&double, event, now).await.unwrap();
+    let (status, body) = start(buyer).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("trial-not-eligible"))
+    );
+
+    // At its end, unbought: the "ended" mail goes, the reminders would not.
+    let ending = world.payload_of(row.id, "trial-ended").await;
+    assert!(composed(&world, &ending, end).await.is_some());
+    world.clean_trials().await;
+    world.clean().await;
+}
+
+#[tokio::test]
+async fn buying_during_a_trial_ends_it_and_skips_its_reminders() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let now = clock.now();
+    let person = world.person().await;
+    let recorder = Arc::new(Recorder::default());
+    let state = support::api_state(&world.url, shared(&clock), &trial_config(&world.plan))
+        .await
+        .with_mailer(recorder.clone());
+    let trial = {
+        let pool = support::api_pool(&world.url).await;
+        let mut tx = pool.begin().await.unwrap();
+        let started = devtab_api::trial::start(
+            &mut tx,
+            state.trial.as_deref().unwrap(),
+            &state.mail_schedule,
+            person,
+            "en",
+            now,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        started.lid
+    };
+    let trial = devtab_api::store::licences::find_by_lid(&mut world.owner, &trial)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // The purchase.
+    let checkout = world.checkout(person, now).await;
+    let (sub, cus) = ids();
+    let double = Double::default();
+    double.set(world.snapshot(&sub, &cus, now + Duration::days(30)));
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session(checkout, &cus, &sub),
+            now,
+        )
+        .await;
+    world.process(&double, event, now).await.unwrap();
+    let ended: String = sqlx::query_scalar("select status from app.licences where id = $1")
+        .bind(trial.id)
+        .fetch_one(&mut world.owner)
+        .await
+        .unwrap();
+    assert_eq!(ended, "ended", "the purchase replaces the trial");
+    for kind in ["trial-ending", "trial-ended"] {
+        let payload = world.payload_of(trial.id, kind).await;
+        let at = trial.paid_until.unwrap() - Duration::hours(1);
+        assert!(
+            composed(&world, &payload, at).await.is_none(),
+            "{kind} is skipped"
+        );
+    }
+
+    // The worker sends what is due now: the trial's start (skipped: it is
+    // over) and the welcome of the paid licence, to the account's address.
+    worker::run_due(&state).await.unwrap();
+    let paid: Uuid = world.licences_of(&sub).await[0].get("id");
+    let email: String = sqlx::query_scalar("select email from auth.users where id = $1")
+        .bind(person)
+        .fetch_one(&mut world.owner)
+        .await
+        .unwrap();
+    let sent: Vec<(MailKind, String)> = recorder
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|m| m.to == email)
+        .map(|m| {
+            (
+                m.kind,
+                m.data["plan_name"].as_str().unwrap_or("").to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        [(MailKind::Welcome, world.plan.clone())],
+        "plan name: the plan's id without texts"
+    );
+    assert!(world.mails_of(paid).await.iter().all(|(_, _, done)| *done));
+    world.clean_trials().await;
+    world.clean().await;
 }
 
 #[tokio::test]

@@ -46,6 +46,17 @@ pub async fn id_by_canonical_email(
     .await
 }
 
+/// The canonical inbox of the user's address (`app.users.email_canonical`).
+pub async fn canonical_of(
+    db: impl PgExecutor<'_>,
+    id: Uuid,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!("select email_canonical from app.users where id = $1", id)
+        .fetch_optional(db)
+        .await
+        .map(Option::flatten)
+}
+
 /// The user's e-mail address, through `app.user_email`.
 pub async fn email_of(db: impl PgExecutor<'_>, id: Uuid) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar!("select app.user_email($1) as email", id)

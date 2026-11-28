@@ -695,6 +695,72 @@
           }
         }
       }
+    },
+    "/internal/trials": {
+      "post": {
+        "tags": [
+          "purchase"
+        ],
+        "summary": "`POST /internal/trials`.",
+        "operationId": "start_trial",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewTrial"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedTrial"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No access token, or one that does not pass",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`trial-off`: no trial is offered here",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`trial-used`: this inbox had one (any spelling, any account); `trial-not-eligible`: the account had a paid licence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -991,6 +1057,17 @@
         },
         "additionalProperties": false
       },
+      "NewTrial": {
+        "type": "object",
+        "description": "A trial to start.",
+        "properties": {
+          "locale": {
+            "$ref": "#/components/schemas/Locale",
+            "description": "The language of the trial's mails."
+          }
+        },
+        "additionalProperties": false
+      },
       "Plan": {
         "type": "object",
         "description": "A plan as its card shows it.",
@@ -1146,7 +1223,8 @@
           "maxAge",
           "manageUrl",
           "locale",
-          "plans"
+          "plans",
+          "trialDays"
         ],
         "properties": {
           "catalog": {
@@ -1173,6 +1251,15 @@
               "$ref": "#/components/schemas/SitePlan"
             },
             "description": "In the order of the cards."
+          },
+          "trialDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The days of the trial without a card a signed-in person may start\n(`POST /internal/trials`); null when none is offered.",
+            "minimum": 0
           },
           "v": {
             "type": "integer",
@@ -1291,6 +1378,29 @@
               "null"
             ],
             "description": "The provider's page (a hosted checkout); answer it with 303."
+          }
+        }
+      },
+      "StartedTrial": {
+        "type": "object",
+        "description": "A started trial.",
+        "required": [
+          "lid",
+          "key",
+          "ends_at"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "description": "When the trial ends, RFC 3339."
+          },
+          "key": {
+            "type": "string",
+            "description": "The licence key, shown only in this answer."
+          },
+          "lid": {
+            "type": "string",
+            "description": "The licence's id."
           }
         }
       },

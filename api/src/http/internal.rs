@@ -17,7 +17,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 use uuid::Uuid;
 
 use super::error::{AppError, ErrorBody};
-use super::{checkouts, connect, members, plans};
+use super::{checkouts, connect, members, plans, trials};
 use crate::auth::CurrentUser;
 use crate::config::Config;
 use crate::plans::catalogue::{Plan, PlanKind, Price, PriceTier, SiteCatalogue, SitePlan, Term};
@@ -102,6 +102,7 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         .route("/internal/checkouts/guest", post(checkouts::start_guest))
         .route("/internal/checkouts/{id}", get(checkouts::read))
         .route("/internal/checkouts/{id}/claim", post(checkouts::claim))
+        .route("/internal/trials", post(trials::start))
         .route("/internal/licences/connect", post(connect::connect))
         .route(
             "/internal/licences/{lid}/members",
@@ -130,6 +131,7 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         checkouts::start_guest,
         checkouts::read,
         checkouts::claim,
+        trials::start,
         connect::connect,
         members::list,
         members::invite,
@@ -157,6 +159,8 @@ pub fn routes(_config: &Config, state: AppState) -> Router {
         checkouts::CheckoutClaim,
         checkouts::GuestCheckoutState,
         checkouts::BuyerAccount,
+        trials::NewTrial,
+        trials::StartedTrial,
         connect::ConnectRequest,
         connect::Connected,
         members::Team,
@@ -194,7 +198,8 @@ mod tests {
                 "/internal/licences/{lid}/members",
                 "/internal/licences/{lid}/members/{email}",
                 "/internal/me",
-                "/internal/plans"
+                "/internal/plans",
+                "/internal/trials"
             ]
         );
         assert!(doc["components"]["securitySchemes"]["bearer"].is_object());

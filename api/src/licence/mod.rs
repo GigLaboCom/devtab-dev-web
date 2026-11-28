@@ -95,7 +95,9 @@ pub fn entitlement(licence: &LicenceRow) -> Entitlement {
             term: licence.term.as_deref().and_then(Term::parse),
             renews: !licence.cancel_at_period_end,
         },
-        "complimentary" => Entitlement {
+        // A trial reads as a complimentary licence with an end: `paid` is its
+        // end, and without a `term` there is no payment grace after it.
+        "complimentary" | "trial" => Entitlement {
             standing,
             paid,
             term: None,

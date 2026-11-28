@@ -11,6 +11,7 @@ pub mod json;
 pub mod members;
 pub mod plans;
 pub mod rate_limit;
+pub mod trials;
 pub mod v1;
 pub mod webhooks;
 
