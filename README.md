@@ -136,8 +136,9 @@ tests/                    node:test, from the sources and from the build (dist/c
 ### Texts awaiting the owner
 
 The texts of the pages the server renders (`pages.pro`, `pages.signIn`,
-`pages.signUp`, `pages.forgotPassword`, `pages.resetPassword`) and of Auth's
-mails (`supabase/templates/sign_in.html` and `recovery.html`, and their
+`pages.signUp`, `pages.forgotPassword`, `pages.resetPassword`,
+`pages.checkout`, `pages.thanks`) and of Auth's mails
+(`supabase/templates/sign_in.html`, `recovery.html` and `invite.html`, and their
 subjects in `supabase/config.toml`) are not the owner's yet: they are the specifications' words where those give any,
 otherwise the shortest factual text, and the English catalogue says so. They
 stay together under their page's key, so that the owner approves or replaces
@@ -206,8 +207,39 @@ the page depends on the visitor, so it carries `Cache-Control: public,
 max-age=300`; when the API cannot be reached it answers 503 with
 `no-store`. With the repository's catalogue no plan is available, so every
 paid plan says "Soon"; the fake provider's XTS prices show only in `dev`.
-The checkout itself is not built yet (it waits for the payment provider), so
-an available plan's link would lead to the 404.
+
+### Buying
+
+`/pro/checkout/?plan=<id>` buys a plan that is on sale, with or without an
+account. Signed in, one form buys for the account. Signed out, where the
+deployment sells without an account (`DEVTAB_GUEST_CHECKOUT=true`, on the
+site and on the API), a form buys without one, next to a link to sign in
+first and come back; without the setting, only that link (and the guest form
+answers 404). A team plan asks for its size (from its smallest team to
+1000; the provider's page lets the buyer change it). The form posts to the
+page itself (Astro's origin check and the `Origin` again, counted with the
+sign-in attempts of the client address, `DEVTAB_RATE_SIGN_IN_PER_IP`), and
+the API starts the checkout ("The purchase", below). The answer is the same
+page saying "on to the payment", which moves on to the provider's page by a
+`<meta http-equiv="refresh">` and a link: a form's redirect to another host
+would need that host in the policy's `form-action`, which names no other
+host. The site shows only the provider's hosted page; the embedded form
+would need Stripe.js.
+
+A guest checkout's answer carries a secret, which the site keeps in an
+`HttpOnly`, `SameSite=Lax` cookie of that browser (`devtab-checkout`, a day,
+with the checkout's id), never in an address or a page.
+
+`/pro/thanks/?ref=<checkout>` is where the provider returns the buyer. It
+asks the API as the signed-in person when the checkout is theirs, otherwise
+as the browser holding the guest checkout's secret, and shows: "being
+confirmed" until the provider's event has been processed (reloading asks
+again); the key the first time anyone asks, this browser or the account,
+then its last four characters; for the account's owner, the step to connect
+the extension (`/pro/connect/`); for a guest, either "check your mail to
+open your account" (a new account was invited) or "sign in with the address
+you paid with" (the address had one). Both pages are personal: never cached,
+never indexed.
 
 ### Signing in
 
@@ -247,7 +279,19 @@ an error coming back as `?error=<code>`, which the page words.
    new password on `/reset-password/`; any other sees "ask for a new
    e-mail". Passwords are checked by Supabase Auth (its length and
    character rules); the site asks for the new one twice and never logs it.
-4. Google: a link (not a form: the policy's `form-action 'self'` would stop a
+4. The invite of a purchase made without an account
+   (`supabase/templates/invite.html`, "Buying" above, "The purchase" below)
+   links to `/auth/callback/?token_hash=…&type=invite` on the project's Site
+   URL. The callback verifies the hash (`verifyOtp`, no PKCE: the API asked
+   for the invite, not this browser), which confirms the address and starts
+   the session, and then decides where to go from the account's metadata:
+   the purchase's `/pro/thanks/`, in the purchase's language. The link names
+   no landing. The invited person has no password: where the deployment
+   offers passwords, the thanks page offers setting one, in the session the
+   invite started (the `devtab-reset` mark, as after a reset mail), and
+   nothing asks for it. A used or expired link comes back to the sign-in
+   page with `?error=invite`.
+5. Google: a link (not a form: the policy's `form-action 'self'` would stop a
    form's redirect to Google) to `/auth/google/`, which asks Supabase Auth
    for the provider's address with a PKCE verifier in a cookie and answers
    303 there; Google comes back through Supabase Auth to
@@ -255,7 +299,7 @@ an error coming back as `?error=<code>`, which the page words.
    starts only from the site's own pages (`Sec-Fetch-Site`). No script, font
    or image comes from Google: the button is text and an outline of the
    letter.
-5. The session lives in cookies that `@supabase/ssr` manages, `HttpOnly` and
+6. The session lives in cookies that `@supabase/ssr` manages, `HttpOnly` and
    `SameSite=Lax` (no script reads them). `src/middleware.ts` reads it only
    on the pages that need it (those of `serverPages` marked `session`, and
    `/auth/*`), verifying the token with `getClaims()` against the project's
@@ -263,7 +307,7 @@ an error coming back as `?error=<code>`, which the page words.
    session cookie is set on a response a cache may keep. A page reads the
    person as `locals.auth`, and `src/lib/api/client.ts` passes their access
    token to the API as `Authorization: Bearer …`.
-6. Signed in, the page shows who and offers signing out
+7. Signed in, the page shows who and offers signing out
    (`POST /auth/signout/`). `?next=<path of this site>` sends a signed-in
    person there, and the forms and links carry it through every method;
    anything but a path of this site is dropped. The account's own page comes
@@ -287,9 +331,14 @@ environment:
   the mails' links and Google come back to it.
 - **E-mail** (`email`, `password`): sign-ups on, "Confirm email" on (a
   password signs in only once its address is confirmed), the code's length
-  6, and the three mail templates of `supabase/templates/` (magic link and
-  confirmation: `sign_in.html`; reset password: `recovery.html`) with their
-  subjects.
+  6, and the four mail templates of `supabase/templates/` (magic link and
+  confirmation: `sign_in.html`; reset password: `recovery.html`; invite user:
+  `invite.html`) with their subjects. The Site URL is the site's address: the
+  invite mail's button is built on it.
+- **Buying without an account** (`DEVTAB_GUEST_CHECKOUT=true`): the API holds
+  the project's secret key (`sb_secret_…`, or the legacy `service_role` key)
+  in a file (`DEVTAB_SUPABASE_SECRET_KEY_FILE`), with which it invites the
+  buyers who have no account. The site never holds it.
 - **Sender**: Auth's mails go out through the project's SMTP server, which
   says who sends them, its address and name: locally `[auth.email.smtp]`,
   off (every mail goes to the mail catcher) unless
@@ -356,6 +405,7 @@ The server reads it when it runs; every value is public.
 | `DEVTAB_RATE_SIGN_IN_PER_IP`      | `10`                    | sign-in attempts an hour, by client address                    |
 | `DEVTAB_SIGN_IN_METHODS`          | `email`                 | the sign-in methods offered: `email`, `password`, `google`     |
 | `DEVTAB_EXTENSION_IDS`            | none                    | the extension builds `/pro/connect/` talks to, comma-separated |
+| `DEVTAB_GUEST_CHECKOUT`           | none (off)              | `true`: anyone may buy without an account (the API's too)      |
 
 ## Content security policy
 
@@ -598,14 +648,69 @@ with a missing secret, a secret key, or a key of the other mode.
 
 ### The purchase
 
-A signed-in person starts a checkout of a plan on sale (`POST
-/internal/checkouts {"plan", "locale"}`: a row in `app.checkouts`, then the
-provider's session; the answer is the provider's page or its embedded form;
-404 `plan-unknown`, 409 `plan-unavailable`, 503 `payments-unavailable`). The
-provider returns the buyer to `<DEVTAB_SITE_URL>[/<locale>]/pro/thanks/?ref=<checkout>`,
-which reads `GET /internal/checkouts/{id}`: `open`, `expired`, or `completed`
-with the key the first time it is asked for within a day, and only to the
-person who started it (anyone else gets 404); `key_hint` after that.
+A purchase is made signed in or, where the deployment allows it, without an
+account (D35 of the specifications). A signed-in person starts a checkout of
+a plan on sale (`POST /internal/checkouts {"plan", "locale", "members"}`: a
+row in `app.checkouts`, then the provider's session, naming the account's
+customer if it has one; the answer is the provider's page or its embedded
+form; 404 `plan-unknown`, 409 `plan-unavailable`, 503
+`payments-unavailable`). The provider returns the buyer to
+`<DEVTAB_SITE_URL>[/<locale>]/pro/thanks/?ref=<checkout>`, which reads
+`GET /internal/checkouts/{id}`: `open`, `expired`, or `completed` with the
+key the first time it is asked for within a day, and only to the person who
+started it (anyone else gets 404); `key_hint` after that.
+
+**Without an account** (a guest checkout; `DEVTAB_GUEST_CHECKOUT=true`):
+`POST /internal/checkouts/guest` takes the same body and starts the same
+checkout with no user and no customer, so Stripe asks the buyer for the
+address and makes a customer (a subscription checkout always does). Its
+answer adds `claim`, a secret for the browser that started it, of which the
+checkout keeps only the SHA-256; `POST /internal/checkouts/{id}/claim
+{"claim"}` answers the checkout as above, plus `account`: `invited` or
+`existing` once paid. With the setting off the route answers 403
+`guest-checkout-off`; on, but without the Supabase secret key, 503
+`guest-checkout-unavailable`; a signed-in purchase works either way. The
+site limits how often a client starts one.
+
+When a guest checkout's subscription is paid, the worker gives it a buyer
+before it issues the licence, inside the subscription's lock and the job's
+transaction:
+
+1. the address the buyer typed at Stripe, read from the Checkout Session
+   (`customer_details.email`; the restricted key's write permission on
+   Checkout Sessions reads it, no permission on Customers is needed);
+2. the account with that exact address (trimmed, lower case), through
+   `app.user_id_by_email`, the security definer function the API role
+   already has; else the first account of the same canonical inbox
+   (`app.users.email_canonical`, below);
+3. only if there is none, an invite: `POST <Supabase Auth>/invite` with the
+   project's secret key (`DEVTAB_SUPABASE_SECRET_KEY_FILE`; Auth's address is
+   `<DEVTAB_SUPABASE_URL>/auth/v1` unless `DEVTAB_SUPABASE_AUTH_URL` names
+   another), the address as typed, user metadata `{locale, app: "devtab",
+source: "purchase", checkout, team}` and `redirect_to` the site's
+   callback. Auth creates the user (the trigger makes its `app.users` row)
+   and sends `supabase/templates/invite.html`.
+
+Supabase Auth invites an unconfirmed address again each time it is asked, so
+the lookups always come first, under an advisory lock on the inbox: a job
+tried again after a failure (Auth down, an answer lost) finds the user the
+first attempt made and invites nobody twice. The licence, the checkout
+(`user_id`, `buyer`) and the customer then belong to that user, and so does
+a team. A buyer who had an account gets no invite; a `mail_licence` job
+(`{"licence", "checkout"}`) records the mail they are owed, and waits in
+`app.jobs`: the worker claims only the kinds it runs, and the mail adapter,
+which will run it, is not built yet. A guest purchase cannot name the
+account's customer, so a person may be the provider's customer more than
+once. Without the secret key, a paid guest checkout waits (its job retries).
+
+**One inbox, many spellings.** DevTab.Dev will offer a trial without a card,
+once per inbox, so the API knows each user's canonical inbox:
+`app.canonical_email` (and `accounts::canonical_email` in the API, held to it
+by a test) trims and lower-cases the address, drops a `+tag` on every domain,
+and on gmail.com and googlemail.com drops the dots and makes the domain
+gmail.com. A trigger on `auth.users` keeps `app.users.email_canonical`; the
+account's own address stays as the person typed it, since they sign in with
+it and mail goes to it.
 
 Nothing changes a licence but a verified event. The queue's worker
 (`api/src/jobs/worker.rs`) runs `process_event` (`api/src/payments/process.rs`):
@@ -631,9 +736,9 @@ Each subscription is handled under a transaction-scoped advisory lock, so two
 events of one purchase processed at once issue one licence. A failed job is
 tried again after 1, 5 and 30 minutes, 2, 6 and 24 hours, then given up and
 logged as an error with its event marked `failed`; an error that retrying
-cannot help is given up at once. Still to come: the mail with the key, the
-site's purchase and return pages, the daily reconciliations, changing plans
-and the customer portal.
+cannot help is given up at once. Still to come: the mail with the key (and
+the `mail_licence` jobs), the trial, the daily reconciliations, changing
+plans and the customer portal.
 
 ### Connecting the extension
 
@@ -878,7 +983,9 @@ the Data API's roles. So far:
 the schema and the API role; `app.users` with its trigger on `auth.users` and
 the two lookups by e-mail address; `app.plans`; licences, installations,
 customers, the job queue and the admin record; the plans' texts and prices and
-`app.settings` (the catalogue's version).
+`app.settings` (the catalogue's version); purchases, provider events and keys
+to reveal; team plans and members; guest checkouts (no user until paid, the
+browser's secret's hash, the buyer) and each user's canonical inbox.
 
 ### Configuration
 
@@ -924,6 +1031,9 @@ customers, the job queue and the admin record; the plans' texts and prices and
 | `DEVTAB_PLANS_MAX_AGE`                    | `86400`                                              | `maxAge` of `GET /v1/plans`, 3600 to 604800 seconds                   |
 | `DEVTAB_SUPABASE_URL`                     | none in `dev`; required otherwise                    | the project (`script/api-dev`: http://127.0.0.1:54332): JWKS          |
 | `DEVTAB_JWT_ISSUER`                       | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | the access tokens' `iss`                                              |
+| `DEVTAB_GUEST_CHECKOUT`                   | `false`                                              | `true`: a checkout may start without an account                       |
+| `DEVTAB_SUPABASE_SECRET_KEY_FILE`         | none: guest checkouts refused without it             | the file of the project's secret key (`sb_secret_…`): invites buyers  |
+| `DEVTAB_SUPABASE_AUTH_URL`                | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | Supabase Auth as the API reaches it, ending in `/auth/v1`             |
 
 Logs are compact lines in `dev` and JSON lines in `staging` and `prod`. They
 carry a licence id and the first four characters of an installation id;
@@ -945,6 +1055,7 @@ api/src/http/             routers, middleware, the error shape, /v1/*, the plans
 api/src/licence/          keys, secrets, the token and its signing, activation, refresh, seats
 api/src/plans/            the plans file, its sync, currencies, the catalogue the endpoints answer
 api/src/auth/             signed-in people: access tokens against the JWKS, the CurrentUser extractor
+api/src/accounts.rs       Supabase Auth's admin API (inviting a guest purchase's buyer), the canonical inbox
 api/src/payments/         the payment provider's interface, the fake provider and Stripe (settings' secrets, REST
                           client, prices, checkout, portal, webhook signatures)
 api/src/store/            the Postgres pool and the queries, a module for each of the tables
@@ -961,7 +1072,8 @@ contract/licence-v1/      the licence contract: schemas, errors, vectors, the co
 contract/plans-v1/        the plans contract: the answer's schema, server catalogues, the copied reader, its test
 contract/internal-openapi.json  the internal listener's OpenAPI document (script/gen)
 supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
-supabase/templates/       Auth's mails: sign-in or confirmation, password reset (link and code, English and Russian)
+supabase/templates/       Auth's mails: sign-in or confirmation, password reset (link and code), the invite of a guest
+                          purchase (English and Russian)
 supabase/migrations/      SQL migrations, forward only
 script/                   db-up, db-migrate, db-reset, auth-up, api-dev, site-server, api-check, check-all,
                           check-migrations, sqlx-prepare, contract-sync, gen, e2e-sign-in.ts; lib/supabase.sh
