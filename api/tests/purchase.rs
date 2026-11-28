@@ -1917,3 +1917,48 @@ fn session_of(checkout: Uuid, id: &str, customer: &str, subscription: &str) -> V
     object["id"] = json!(id);
     object
 }
+
+#[tokio::test]
+async fn a_guest_buyer_is_found_by_the_exact_address_else_by_the_same_inbox() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let now = OffsetDateTime::now_utc();
+    let (accounts, auth) = gotrue(&world.url).await;
+    let tag = Uuid::new_v4().simple().to_string();
+    // The same inbox twice: dotted first, then plain.
+    let dotted = support::insert_auth_user(&mut world.owner, &format!("p.q{tag}@gmail.com")).await;
+    let plain = support::insert_auth_user(&mut world.owner, &format!("pq{tag}@gmail.com")).await;
+    world.people.extend([dotted, plain]);
+    let double = Double::default();
+    let mut buy = async |typed: String| {
+        let (checkout, session) = world.guest_checkout("en", now).await;
+        double.emails.lock().unwrap().insert(session.clone(), typed);
+        let (sub, cus) = ids();
+        double.set(world.snapshot(&sub, &cus, now + Duration::days(30)));
+        let event = world
+            .event(
+                "checkout.session.completed",
+                session_of(checkout, &session, &cus, &sub),
+                now,
+            )
+            .await;
+        world
+            .process_with(&double, Some(&accounts), event, now)
+            .await
+            .unwrap();
+        world.licences_of(&sub).await[0].get::<Option<Uuid>, _>("user_id")
+    };
+    assert_eq!(
+        buy(format!("PQ{tag}@gmail.com")).await,
+        Some(plain),
+        "the exact address first"
+    );
+    assert_eq!(
+        buy(format!("P.Q{tag}+shop@googlemail.com")).await,
+        Some(dotted),
+        "else the first account of the same inbox"
+    );
+    assert!(auth.asked.lock().unwrap().is_empty(), "nobody invited");
+    world.clean().await;
+}

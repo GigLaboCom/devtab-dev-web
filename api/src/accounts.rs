@@ -249,10 +249,10 @@ fn without_url(err: reqwest::Error) -> String {
     text
 }
 
-/// An address as the buyer typed it at the provider, as accounts are looked
-/// up and made: surrounding spaces dropped, lower case. Nothing else: no dots
-/// or `+tags` removed, so that the account is the one the person signs in to
-/// with the same address.
+/// An address as the buyer typed it at the provider, as an account is made
+/// with it: surrounding spaces dropped, lower case, nothing else. The person
+/// signs in with this address and mail goes to it; which inbox it is, is
+/// [`canonical_email`].
 pub fn normal_email(raw: &str) -> Option<String> {
     let email = raw.trim().to_lowercase();
     let (local, domain) = email.split_once('@')?;
@@ -264,6 +264,35 @@ pub fn normal_email(raw: &str) -> Option<String> {
         && !email.chars().any(|c| c.is_whitespace() || c.is_control())
         && !domain.contains('@');
     ok.then_some(email)
+}
+
+/// The inbox an address reaches, whatever its spelling: trimmed and lower
+/// case; on every domain a `+tag` after the local part's first character is
+/// dropped; on gmail.com and googlemail.com the local part's dots are dropped
+/// and the domain is gmail.com. The same rule as `app.canonical_email`, which
+/// keeps `app.users.email_canonical` (a test holds the two together).
+///
+/// For identity only, never to write to: a trial without a card is given
+/// once per inbox (so `a.b+2@gmail.com` cannot take a second one), and a paid
+/// guest checkout whose exact address has no account goes to the account of
+/// the same inbox. The account's address stays as the person typed it.
+pub fn canonical_email(raw: &str) -> Option<String> {
+    let email = raw.trim().to_lowercase();
+    if email.is_empty() {
+        return None;
+    }
+    let Some((local, domain)) = email.rsplit_once('@') else {
+        return Some(email);
+    };
+    let local = match local.find('+') {
+        Some(plus) if plus > 0 => &local[..plus],
+        _ => local,
+    };
+    Some(if matches!(domain, "gmail.com" | "googlemail.com") {
+        format!("{}@gmail.com", local.replace('.', ""))
+    } else {
+        format!("{local}@{domain}")
+    })
 }
 
 #[cfg(test)]
@@ -290,6 +319,31 @@ mod tests {
         assert!(SecretKey::parse("sb_secret_a b").is_err());
         let key = SecretKey::parse("sb_secret_hidden").unwrap();
         assert!(!format!("{key:?}").contains("hidden"));
+    }
+
+    #[test]
+    fn one_inbox_under_many_spellings_has_one_canonical_address() {
+        for (spelling, inbox) in [
+            (" First.Last+Trial2@GMail.com ", "firstlast@gmail.com"),
+            ("f.i.r.s.t.l.a.s.t@googlemail.com", "firstlast@gmail.com"),
+            ("firstlast@gmail.com", "firstlast@gmail.com"),
+            (
+                "first.last+tag@example.invalid",
+                "first.last@example.invalid",
+            ),
+            ("First.Last@Example.Invalid", "first.last@example.invalid"),
+            ("+only@example.invalid", "+only@example.invalid"),
+            ("a+b+c@example.invalid", "a@example.invalid"),
+            ("odd@name@example.invalid", "odd@name@example.invalid"),
+            ("no-at-all", "no-at-all"),
+        ] {
+            assert_eq!(
+                canonical_email(spelling).as_deref(),
+                Some(inbox),
+                "{spelling}"
+            );
+        }
+        assert_eq!(canonical_email("   "), None);
     }
 
     #[test]

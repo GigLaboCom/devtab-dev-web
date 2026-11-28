@@ -19,9 +19,10 @@
 //!
 //! A guest checkout (started without an account) has no person yet: when its
 //! subscription is paid, the buyer is the user of the address they typed in
-//! the provider's checkout (read from the provider, trimmed and lower case),
-//! found in Supabase Auth or invited by mail ([`Accounts`]), never invited
-//! twice. That happens inside the subscription's lock and the job's
+//! the provider's checkout (read from the provider): the account with that
+//! exact address, else the first with the same canonical inbox
+//! ([`canonical_email`]: `a.b+x@gmail.com` is `ab@gmail.com`), else a new one
+//! invited by mail ([`Accounts`]), never invited twice. That happens inside the subscription's lock and the job's
 //! transaction, and the lookup comes first, so a job tried again after a
 //! failure finds the user the first attempt invited instead of inviting
 //! again. A buyer who had an account gets no invite; a `mail_licence` job is
@@ -33,7 +34,7 @@ use uuid::Uuid;
 
 use super::reconcile::{Decision, LicenceState, LicenceStatus, reconcile};
 use super::{EventSource, ProviderError, Signal, SubscriptionSnapshot};
-use crate::accounts::{AccountError, Accounts, Invitation, normal_email};
+use crate::accounts::{AccountError, Accounts, Invitation, canonical_email, normal_email};
 use crate::jobs::worker::MAIL_LICENCE;
 use crate::licence::key;
 use crate::store::licences::{NewLicence, SubscriptionLicence};
@@ -494,12 +495,14 @@ impl Buyer {
 /// The user a paid guest checkout belongs to: the account of the address the
 /// buyer typed at the provider, or a new one invited by mail.
 ///
-/// The address is only trimmed and lower-cased (no dots or `+tags` dropped):
-/// the account must be the one the person signs in to with that address.
-/// Under an advisory lock on the address, so that two purchases with one
-/// address never both invite it; the lookup comes before the invite, so a
-/// retry after a failed transaction finds the user instead of inviting again
-/// (Supabase Auth would send an unconfirmed address another invite).
+/// The account with the exact address (trimmed, lower case) comes first;
+/// else the first account of the same canonical inbox, so that one inbox is
+/// one account whatever its spelling (the trial without a card is once per
+/// inbox, D35); only then is the typed address invited, as typed. Under an
+/// advisory lock on the inbox, so that two purchases of one inbox never both
+/// invite it; the lookups come before the invite, so a retry after a failed
+/// transaction finds the user instead of inviting again (Supabase Auth would
+/// send an unconfirmed address another invite).
 async fn ensure_buyer(
     conn: &mut PgConnection,
     source: &dyn EventSource,
@@ -531,8 +534,9 @@ async fn ensure_buyer(
             checkout.id
         ))
     })?;
-    lock_key(conn, &format!("accounts:{email}")).await?;
-    if let Some(user) = users::id_by_email(&mut *conn, &email).await? {
+    let inbox = canonical_email(&email).unwrap_or_else(|| email.clone());
+    lock_key(conn, &format!("accounts:{inbox}")).await?;
+    if let Some(user) = find_buyer(conn, &email, &inbox).await? {
         tracing::info!(checkout = %checkout.id, "a guest checkout's buyer has an account: no invite");
         return Ok(Buyer::Existing(user));
     }
@@ -550,7 +554,7 @@ async fn ensure_buyer(
             Ok(Buyer::Invited(user))
         }
         // Made in the meantime, elsewhere (a sign-up): theirs, uninvited.
-        Err(AccountError::Exists) => users::id_by_email(&mut *conn, &email)
+        Err(AccountError::Exists) => find_buyer(conn, &email, &inbox)
             .await?
             .map(Buyer::Existing)
             .ok_or_else(|| {
@@ -563,6 +567,18 @@ async fn ensure_buyer(
         Err(err @ AccountError::Unavailable(_)) => Err(ProcessError::Retry(err.to_string())),
         Err(err @ AccountError::Refused(_)) => Err(ProcessError::Permanent(err.to_string())),
     }
+}
+
+/// The account of `email` exactly, else the first of its canonical `inbox`.
+async fn find_buyer(
+    conn: &mut PgConnection,
+    email: &str,
+    inbox: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    if let Some(user) = users::id_by_email(&mut *conn, email).await? {
+        return Ok(Some(user));
+    }
+    users::id_by_canonical_email(&mut *conn, inbox).await
 }
 
 /// A full refund or a lost dispute revokes the subscription's licence.
