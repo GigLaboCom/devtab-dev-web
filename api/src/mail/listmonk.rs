@@ -14,7 +14,9 @@
 //!   left as it is (create-only: `409` means it is there);
 //! - without it, the mail goes in `external` mode (`subscriber_mode:
 //!   external`), which needs no subscriber at all, as their one-to-one mails
-//!   do.
+//!   do. Only a listmonk that knows the mode takes it: v6.2.0 does, v5.1.0
+//!   ignores it and refuses an address that is not a subscriber (both tried
+//!   locally); with an older instance, set the list.
 //!
 //! Either way a template reads only `{{ .Tx.Data.* }}`, never
 //! `{{ .Subscriber.* }}` (empty in `external` mode): everything it needs is

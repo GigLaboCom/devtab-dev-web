@@ -137,7 +137,8 @@ tests/                    node:test, from the sources and from the build (dist/c
 
 The texts of the pages the server renders (`pages.pro`, `pages.signIn`,
 `pages.signUp`, `pages.forgotPassword`, `pages.resetPassword`,
-`pages.checkout`, `pages.thanks`) and of Auth's mails
+`pages.checkout`, `pages.thanks`, `pages.trial`), of the API's mails
+(`mail/listmonk/`) and of Auth's mails
 (`supabase/templates/sign_in.html`, `recovery.html` and `invite.html`, and their
 subjects in `supabase/config.toml`) are not the owner's yet: they are the specifications' words where those give any,
 otherwise the shortest factual text, and the English catalogue says so. They
@@ -207,6 +208,16 @@ the page depends on the visitor, so it carries `Cache-Control: public,
 max-age=300`; when the API cannot be reached it answers 503 with
 `no-store`. With the repository's catalogue no plan is available, so every
 paid plan says "Soon"; the fake provider's XTS prices show only in `dev`.
+
+### The free trial
+
+Where the deployment offers a trial (`trialDays` of `GET /internal/plans`;
+the API's `DEVTAB_TRIAL_DAYS`), `/pro/` says how many days it lasts and
+links to `/pro/trial/`. Signed out, that page links to signing in and back
+(a trial belongs to an account, one per inbox); signed in, one form starts
+it, posting to the page itself (origin checked, counted with the sign-in
+attempts), and the answer shows its end, its key once and the step to
+connect the extension. Without a trial the page says none is offered.
 
 ### Buying
 
@@ -464,6 +475,8 @@ nobody), has a plan, a number of seats and a key; the extension activates an
 installation with the key and keeps it going with the installation's secret
 and the signed token the server returns.
 
+- **Kinds**: `subscription` (from a purchase), `complimentary` (`admin
+licence comp`), `trial` ("The trial"), `one_time` (not sold yet).
 - **Key**: `DTD-XXXX-XXXX-XXXX-XXXX-XXXX`, 100 random bits in Crockford base32,
   shown once and stored only as the SHA-256 of its canonical form (upper
   case, no spaces or hyphens, `O` read as `0`, `I` and `L` as `1`). A licence
@@ -696,18 +709,13 @@ the lookups always come first, under an advisory lock on the inbox: a job
 tried again after a failure (Auth down, an answer lost) finds the user the
 first attempt made and invites nobody twice. The licence, the checkout
 (`user_id`, `buyer`) and the customer then belong to that user, and so does
-a team. A buyer who had an account gets no invite; the mail they are owed
-is queued as a `mail` job, a mail of a kind to a user in a language with the
-data its template needs (`{"mail": "licence-added", "user", "locale",
-"data": {"licence", "checkout", "plan"}}`; the address is read when it is
-sent, never kept in the queue). It waits in `app.jobs`: the worker claims
-only the kinds it runs, and the mailer that will run it (one interface, the
-listmonk transactional API its first provider) is not built yet. A guest purchase cannot name the
+a team. A buyer who had an account gets no invite but a `licence-added`
+mail; every other buyer gets the `welcome` mail ("Mail", below). A guest purchase cannot name the
 account's customer, so a person may be the provider's customer more than
 once. Without the secret key, a paid guest checkout waits (its job retries).
 
-**One inbox, many spellings.** DevTab.Dev will offer a trial without a card,
-once per inbox, so the API knows each user's canonical inbox:
+**One inbox, many spellings.** The trial without a card is once per inbox
+("The trial", below), so the API knows each user's canonical inbox:
 `app.canonical_email` (and `accounts::canonical_email` in the API, held to it
 by a test) trims and lower-cases the address, drops a `+tag` on every domain,
 and on gmail.com and googlemail.com drops the dots and makes the domain
@@ -739,9 +747,83 @@ Each subscription is handled under a transaction-scoped advisory lock, so two
 events of one purchase processed at once issue one licence. A failed job is
 tried again after 1, 5 and 30 minutes, 2, 6 and 24 hours, then given up and
 logged as an error with its event marked `failed`; an error that retrying
-cannot help is given up at once. Still to come: the mail with the key and
-the mailer (which sends the queued `mail` jobs), the trial, the daily reconciliations, changing
-plans and the customer portal.
+cannot help is given up at once. A purchase ends the buyer's running trial.
+Still to come: the daily reconciliations, changing plans and the customer
+portal.
+
+### The trial
+
+A trial without a card (D36): where `DEVTAB_TRIAL_DAYS` is set (7 to 14;
+`serve` refuses any other value), a signed-in person starts one with
+`POST /internal/trials {"locale"}` and gets its key once; `GET
+/internal/plans` gives `trialDays` (null without a trial), and the site's
+`/pro/trial/` starts it. Signed in only, so the address is confirmed.
+
+- It is an ordinary licence of kind `trial`: the seats of
+  `DEVTAB_TRIAL_PLAN`, a key, and its end in `paid_until`. The token reads it
+  like a complimentary licence with an end (`paid` is the end, no `term`, so
+  no payment grace; `renews: false`), so the extension activates, refreshes
+  and expires it as any licence: past its end the token says `ended`,
+  activation answers `licence-inactive`, connecting from the account skips
+  it.
+- Once per canonical inbox: `app.trial_inboxes` keeps the SHA-256 of
+  `app.users.email_canonical` (never the address) and outlives the account,
+  so another spelling of the same inbox, or a new account after deleting the
+  old one, gets 409 `trial-used`. Someone who ever had a paid licence gets 409
+  `trial-not-eligible`. Off: 403 `trial-off`.
+- A purchase ends a running trial (its installations' next check says
+  `ended`, and connecting from the account picks the paid licence).
+- Its mails: `trial-started` at once, `trial-ending` the days of
+  `DEVTAB_MAIL_TRIAL_REMIND_DAYS` before its end (3 and 1), `trial-ended` at
+  its end; each is skipped if the trial is over or replaced by then.
+
+### Mail
+
+The API's own mails go through one interface (`api/src/mail/`, D37): a mail
+of a kind, to an address, in a language, with the data its template needs.
+Supabase Auth's mails (sign-in, password reset, the invite) stay Supabase's.
+
+- **Queued, never sent inline.** What happens queues a `mail` job
+  (`mail::queue`): the kind, the user or team member it goes to by id (never
+  an address), the language and record ids, due when it should go, with a
+  key that makes it once only (one mail per licence, kind and period, however
+  many events ask).
+- **Checked when due.** The worker reads the state again (`mail::compose`):
+  a mail whose reason has gone is skipped (no trial reminder after a
+  purchase, no "payment failed" once paid, no renewal reminder for a moved
+  period or a cancelled subscription), the address is read now, and the data
+  are built (`site_url`, `plans_url`, `connect_url`, `sign_in_url`,
+  `plan_name` in the mail's language, `key_hint`, `members`, `ends_on`,
+  `days_left`). A provider's refusal gives the mail up at once; an outage
+  retries it on the queue's schedule.
+- **The kinds.** `trial-started`, `trial-ending`, `trial-ended` ("The
+  trial"); `welcome` after a paid licence and `licence-added` for a guest
+  buyer whose address had an account; `renewal-reminder`
+  `DEVTAB_MAIL_RENEWAL_REMIND_DAYS` (7) before a yearly renewal;
+  `payment-failed`, `subscription-cancelled` and `subscription-ended` when a
+  subscription becomes overdue, stops renewing or ends; `team-invite` when an
+  owner invites an address.
+- **Providers**, chosen by `DEVTAB_MAIL`: unset or `none`, mail jobs wait in
+  the queue and nothing else changes; `log` logs them (kind and language,
+  never the address; refused in `prod`); `listmonk` sends them through
+  listmonk's transactional API (`POST /api/tx`) with the template id of each
+  kind and language (`DEVTAB_MAIL_LISTMONK_TEMPLATES`), HTTP basic auth with
+  an API user and its token (a file), and the sender `DEVTAB_MAIL_FROM`. A
+  kind without a template is refused when it is sent, and `serve` warns of
+  the missing ones at start.
+- **Who receives a listmonk mail.** listmonk's default mode sends only to
+  its subscribers. With `DEVTAB_MAIL_LISTMONK_LIST_ID` the recipient first
+  joins that (private) list, preconfirmed, and an existing subscriber is left
+  as it is; without it the mail goes in `external` mode, which needs no
+  subscriber but a listmonk that knows the mode (v6.2.0 does; v5.1.0 ignores
+  it and refuses the address). Templates read only `{{ .Tx.Data.* }}`.
+- **Templates.** `mail/listmonk/` holds a skeleton of every kind in English
+  and Russian (`<kind>.<locale>.html`, subjects in `templates.toml`), whose
+  texts await the owner, built into the binary. `devtab-api admin mail
+templates` says what it would create or update in the instance;
+  `--apply` creates or updates them by name (`DevTab.Dev: <kind>
+(<locale>)`) and prints `DEVTAB_MAIL_LISTMONK_TEMPLATES=…` for the deploy
+  configuration.
 
 ### Connecting the extension
 
@@ -952,6 +1034,7 @@ transaction; keys are printed once and never stored.
 | `keys generate --kid <p1, p2, …> --out <file>`, `keys generate --test --out …` | An ES256 key pair: the private key into a new file, the public entry printed (`--list-out <file>`: also as a key list) |
 | `keys check`                                                                   | The server's key against the trusted keys, as `serve` checks it                                                        |
 | `stripe check [--file config/plans.toml]`                                      | Stripe's settings and secrets as `serve` checks them; every Stripe price of the file found at Stripe; changes nothing  |
+| `mail templates [--apply]`                                                     | The listmonk templates of every mail: what it would do; `--apply` creates or updates them and prints their ids         |
 
 `devtab-api openapi` prints the internal listener's OpenAPI document (what
 `script/gen` writes); it needs neither the database nor any setting.
@@ -988,7 +1071,9 @@ the two lookups by e-mail address; `app.plans`; licences, installations,
 customers, the job queue and the admin record; the plans' texts and prices and
 `app.settings` (the catalogue's version); purchases, provider events and keys
 to reveal; team plans and members; guest checkouts (no user until paid, the
-browser's secret's hash, the buyer) and each user's canonical inbox.
+browser's secret's hash, the buyer) and each user's canonical inbox; the
+mail jobs' keys, licences' languages and team members' ids; trials and the
+inboxes that had one.
 
 ### Configuration
 
@@ -1037,6 +1122,17 @@ browser's secret's hash, the buyer) and each user's canonical inbox.
 | `DEVTAB_GUEST_CHECKOUT`                   | `false`                                              | `true`: a checkout may start without an account                       |
 | `DEVTAB_SUPABASE_SECRET_KEY_FILE`         | none: guest checkouts refused without it             | the file of the project's secret key (`sb_secret_…`): invites buyers  |
 | `DEVTAB_SUPABASE_AUTH_URL`                | `<DEVTAB_SUPABASE_URL>/auth/v1`                      | Supabase Auth as the API reaches it, ending in `/auth/v1`             |
+| `DEVTAB_TRIAL_DAYS`                       | none: no trial                                       | 7 to 14: the trial without a card; any other value is refused         |
+| `DEVTAB_TRIAL_PLAN`                       | none: required with the days                         | the plan whose seats a trial gives                                    |
+| `DEVTAB_MAIL`                             | `none`: mail jobs wait                               | `none`, `log` (not in `prod`) or `listmonk`                           |
+| `DEVTAB_MAIL_FROM`                        | the provider's default                               | the sender, `Name <address>`                                          |
+| `DEVTAB_MAIL_LISTMONK_URL`                | none: required with `listmonk`                       | `https://<host>[:port]`; `http` to the loopback address in `dev` only |
+| `DEVTAB_MAIL_LISTMONK_API_USER`           | none: required with `listmonk`                       | the API user                                                          |
+| `DEVTAB_MAIL_LISTMONK_API_TOKEN_FILE`     | none: required with `listmonk`                       | the file of its token                                                 |
+| `DEVTAB_MAIL_LISTMONK_TEMPLATES`          | none: every mail refused                             | `<kind>.<locale>=<id>,…`, as `admin mail templates --apply` prints    |
+| `DEVTAB_MAIL_LISTMONK_LIST_ID`            | none: `external` mode                                | the list recipients join first                                        |
+| `DEVTAB_MAIL_TRIAL_REMIND_DAYS`           | `3,1`                                                | days before a trial's end, each fewer than the trial's days           |
+| `DEVTAB_MAIL_RENEWAL_REMIND_DAYS`         | `7`                                                  | days before a yearly renewal, 1 to 60                                 |
 
 Logs are compact lines in `dev` and JSON lines in `staging` and `prod`. They
 carry a licence id and the first four characters of an installation id;
@@ -1059,6 +1155,8 @@ api/src/licence/          keys, secrets, the token and its signing, activation, 
 api/src/plans/            the plans file, its sync, currencies, the catalogue the endpoints answer
 api/src/auth/             signed-in people: access tokens against the JWKS, the CurrentUser extractor
 api/src/accounts.rs       Supabase Auth's admin API (inviting a guest purchase's buyer), the canonical inbox
+api/src/trial.rs          the trial without a card
+api/src/mail/             the mails: kinds, the queue, composing a due mail, the providers (listmonk, log), templates
 api/src/payments/         the payment provider's interface, the fake provider and Stripe (settings' secrets, REST
                           client, prices, checkout, portal, webhook signatures)
 api/src/store/            the Postgres pool and the queries, a module for each of the tables
@@ -1075,6 +1173,7 @@ contract/licence-v1/      the licence contract: schemas, errors, vectors, the co
 contract/plans-v1/        the plans contract: the answer's schema, server catalogues, the copied reader, its test
 contract/internal-openapi.json  the internal listener's OpenAPI document (script/gen)
 supabase/config.toml      the local Supabase stack: ports, the Data API, Auth
+mail/listmonk/            the API's mail templates for listmonk, a skeleton of every kind in English and Russian
 supabase/templates/       Auth's mails: sign-in or confirmation, password reset (link and code), the invite of a guest
                           purchase (English and Russian)
 supabase/migrations/      SQL migrations, forward only
