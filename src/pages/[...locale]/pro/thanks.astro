@@ -1,0 +1,137 @@
+---
+/**
+ * /pro/thanks/?ref=<checkout>: where the payment provider returns the buyer,
+ * and where an invited buyer lands from the invite mail (the callback sends
+ * them here). It asks the API how the checkout went:
+ *
+ * - as the signed-in person, when the checkout is theirs (bought signed in,
+ *   or a guest purchase that is now in their account);
+ * - otherwise as the browser that started a guest checkout, by the secret in
+ *   its cookie (src/lib/checkout.ts).
+ *
+ * Open: the payment is being confirmed (the provider's event may come a few
+ * seconds after the buyer); reloading asks again. Completed: the key, the
+ * first time anyone asks (this browser or the account), then its last four
+ * characters. The account's owner gets the step to connect the extension
+ * and, right after an invite when the deployment offers passwords, an
+ * optional link to set one (the session the invite started may, as after a
+ * password reset). A guest is told where the licence is: in a new account
+ * whose invite is in their mail, or in the account the address already had.
+ * Personal: never cached, never indexed.
+ */
+import AuthCard from '../../../components/auth/AuthCard.astro';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { defaultLocale, fill, localeOfParam, messages } from '../../../i18n';
+import { authConfig, enabledMethods } from '../../../lib/auth/config';
+import { authHref, inResetSession, signInHref } from '../../../lib/auth/server';
+import { ui } from '../../../lib/auth/ui';
+import {
+  type GuestCheckoutState,
+  checkoutOfBrowser,
+  checkoutOfPerson,
+  checkoutRef,
+  claimOf,
+} from '../../../lib/checkout';
+
+export const prerender = false;
+
+const locale = localeOfParam(Astro.params.locale);
+// No page here: the server answers with the site's 404 page.
+if (!locale) return new Response(null, { status: 404 });
+const all = messages(locale).pages;
+const t = all.thanks;
+Astro.response.headers.set('Cache-Control', 'no-store');
+
+const prefix = locale === defaultLocale ? '' : `/${locale}`;
+const person = Astro.locals.auth;
+const ref = checkoutRef(Astro.url.searchParams.get('ref'));
+const here = ref ? `${prefix}/pro/thanks/?ref=${ref}` : `${prefix}/pro/thanks/`;
+
+let seen: GuestCheckoutState | null = null;
+let mine = false;
+if (ref && person) {
+  const state = await checkoutOfPerson(Astro.locals, ref);
+  if (state) {
+    seen = { ...state, account: null };
+    mine = true;
+  }
+}
+if (ref && !seen) {
+  const claim = claimOf(Astro.cookies, ref);
+  if (claim) seen = await checkoutOfBrowser(ref, claim);
+}
+const signInOn = authConfig() !== null && enabledMethods().size > 0;
+const offerPassword = mine && enabledMethods().has('password') && inResetSession(Astro.cookies, person);
+---
+
+<BaseLayout locale={locale} page="thanks">
+  <AuthCard heading={t.heading}>
+    {!seen && (
+      <>
+        <p>{t.nothing}</p>
+        <a href={`${prefix}/pro/`} class={ui.primary}>
+          {t.plans}
+        </a>
+      </>
+    )}
+    {seen?.status === 'open' && (
+      <>
+        <p role="status">{t.open}</p>
+        {!mine && <p class={`mt-2 ${ui.note}`}>{t.openGuest}</p>}
+        <a href={here} class={ui.primary}>
+          {t.reload}
+        </a>
+      </>
+    )}
+    {seen?.status === 'expired' && (
+      <>
+        <p>{t.expired}</p>
+        <a href={`${prefix}/pro/`} class={ui.primary}>
+          {t.plans}
+        </a>
+      </>
+    )}
+    {seen?.status === 'completed' && (
+      <>
+        <p role="status">{t.done}</p>
+        {seen.key && (
+          <>
+            <p class={`mt-5 ${ui.label}`}>{t.keyLabel}</p>
+            <p class="mt-1.5 rounded-md border border-border bg-muted px-3 py-2 font-mono text-sm break-all select-all">
+              {seen.key}
+            </p>
+            <p class={`mt-1 ${ui.note}`}>{t.keyNote}</p>
+          </>
+        )}
+        {!seen.key && seen.key_hint && <p class={`mt-4 ${ui.note}`}>{fill(t.keyHint, { hint: seen.key_hint })}</p>}
+        {mine && (
+          <>
+            <a href={`${prefix}/pro/connect/`} class={ui.primary}>
+              {t.connect}
+            </a>
+            <p class={`mt-2 ${ui.note}`}>{t.connectNote}</p>
+            {offerPassword && (
+              <>
+                <a href={authHref(locale, 'resetPassword', here)} class={`mt-5 ${ui.secondary}`}>
+                  {t.setPassword}
+                </a>
+                <p class={`mt-2 ${ui.note}`}>{t.passwordNote}</p>
+              </>
+            )}
+          </>
+        )}
+        {!mine && seen.account === 'invited' && <p class="mt-5">{t.invited}</p>}
+        {!mine && seen.account === 'existing' && (
+          <>
+            <p class="mt-5">{t.existing}</p>
+            {signInOn && (
+              <a href={signInHref(locale, here)} class={ui.primary}>
+                {t.signIn}
+              </a>
+            )}
+          </>
+        )}
+      </>
+    )}
+  </AuthCard>
+</BaseLayout>

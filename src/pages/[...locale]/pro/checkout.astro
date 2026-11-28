@@ -1,0 +1,212 @@
+---
+/**
+ * /pro/checkout/?plan=<id>: buying a plan of /pro/, with or without an
+ * account. A team plan asks how many members to start with (the provider's
+ * page lets the buyer change it).
+ *
+ * - Signed in: one form; the licence goes to this account.
+ * - Signed out, where the deployment sells without an account
+ *   (`DEVTAB_GUEST_CHECKOUT=true`): a form that buys without one (the
+ *   provider asks for the address; the licence goes to that address's
+ *   account, made and invited by mail if there is none), and a link to sign
+ *   in first. Otherwise only the link to sign in, and back here.
+ *
+ * The forms post to this page (Astro's origin check, and the `Origin` again
+ * here), at most DEVTAB_RATE_SIGN_IN_PER_IP times an hour per client address,
+ * counted with the forms of signing in. The API starts the checkout; a guest
+ * checkout's secret goes into an `HttpOnly` cookie of this browser
+ * (src/lib/checkout.ts). The answer is this page saying "on to the payment",
+ * which moves to the provider's page by a `<meta http-equiv="refresh">` and
+ * a link: a form's redirect to another host would need that host in the
+ * policy's `form-action`, and the policy names no other host. Personal:
+ * never cached, never indexed.
+ */
+import AuthCard from '../../../components/auth/AuthCard.astro';
+import OrDivider from '../../../components/auth/OrDivider.astro';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import { defaultLocale, fill, localeOfParam, messages } from '../../../i18n';
+import { plans } from '../../../lib/api/client';
+import { authConfig, enabledMethods } from '../../../lib/auth/config';
+import { allowAttempt, clientAddress, signInHref } from '../../../lib/auth/server';
+import { ui } from '../../../lib/auth/ui';
+import { guestCheckoutEnabled, keepClaim, startCheckout } from '../../../lib/checkout';
+import { formatPrice } from '../../../lib/price';
+
+export const prerender = false;
+
+const locale = localeOfParam(Astro.params.locale);
+// No page here: the server answers with the site's 404 page.
+if (!locale) return new Response(null, { status: 404 });
+const all = messages(locale).pages;
+const t = all.checkout;
+const p = all.pro;
+Astro.response.headers.set('Cache-Control', 'no-store');
+
+const prefix = locale === defaultLocale ? '' : `/${locale}`;
+const person = Astro.locals.auth;
+const guestOn = guestCheckoutEnabled();
+const signInOn = authConfig() !== null && enabledMethods().size > 0;
+
+let planId = Astro.url.searchParams.get('plan')?.trim() ?? '';
+let membersRaw = Astro.url.searchParams.get('members')?.trim() ?? '';
+let error: string | undefined;
+/** The provider's page, once the checkout has started. */
+let go: string | undefined;
+
+if (Astro.request.method === 'POST') {
+  if (Astro.request.headers.get('origin') !== Astro.url.origin) return new Response(null, { status: 403 });
+  const form = await Astro.request.formData().catch(() => new FormData());
+  const field = (name: string) => form.get(name)?.toString().trim() ?? '';
+  planId = field('plan');
+  membersRaw = field('members');
+  const guest = field('as') === 'guest';
+  if (guest && !guestOn) return new Response(null, { status: 404 });
+  const members = membersRaw ? Number.parseInt(membersRaw, 10) : undefined;
+  if (!guest && !person) {
+    error = 'signed-out';
+  } else if (members !== undefined && !(Number.isInteger(members) && members > 0 && members <= 1000)) {
+    error = 'members';
+  } else if (!allowAttempt(clientAddress(Astro.request, Astro.clientAddress))) {
+    error = 'rate';
+  } else {
+    const started = await startCheckout(Astro.locals, guest, {
+      plan: planId,
+      locale,
+      ...(members === undefined ? {} : { members }),
+    });
+    if (started.ok) {
+      if (started.claim) keepClaim(Astro.cookies, Astro.url, started.checkout, started.claim);
+      go = started.redirect;
+    } else {
+      error = started.error;
+    }
+  }
+}
+
+const catalogue = go ? null : await plans(locale);
+const plan = catalogue?.plans.find(candidate => candidate.id === planId && candidate.kind === 'paid');
+const forSale = Boolean(plan?.available && plan.price);
+const minMembers = plan?.minMembers ?? null;
+const members = minMembers === null ? null : Math.max(minMembers, Number.parseInt(membersRaw, 10) || minMembers);
+const period = !plan
+  ? ''
+  : minMembers === null
+    ? plan.term === 'year'
+      ? p.perYear
+      : p.perMonth
+    : plan.term === 'year'
+      ? p.perMemberYear
+      : p.perMemberMonth;
+const here = `${prefix}/pro/checkout/?${new URLSearchParams({ plan: planId })}`;
+const errors: Record<string, string> = {
+  unavailable: t.errorUnavailable,
+  members: fill(t.errorMembers, { min: String(minMembers ?? 1) }),
+  'signed-out': t.errorSignedOut,
+  'guest-off': t.errorGuestOff,
+  payments: t.errorPayments,
+  rate: all.signIn.errorRate,
+};
+const message = error ? errors[error] : undefined;
+---
+
+<BaseLayout locale={locale} page="checkout" refresh={go}>
+  {go && (
+    <AuthCard heading={t.continueHeading}>
+      <p role="status">{t.continueNote}</p>
+      <a href={go} class={ui.primary}>
+        {t.continue}
+      </a>
+    </AuthCard>
+  )}
+  {!go && (
+    <AuthCard heading={t.heading} error={message}>
+      {catalogue === null && <p>{p.unavailable}</p>}
+      {catalogue !== null && !forSale && (
+        <>
+          <p>{t.notForSale}</p>
+          <a href={`${prefix}/pro/`} class={ui.primary}>
+            {t.plans}
+          </a>
+        </>
+      )}
+      {plan && forSale && plan.price && (
+        <>
+          <p class="text-lg font-semibold" lang={plan.locale === locale ? undefined : plan.locale}>
+            {plan.name}
+          </p>
+          <p class="mt-1 flex items-baseline gap-2">
+            <span class="text-2xl font-semibold tracking-tight">{formatPrice(plan.price, locale)}</span>
+            <span class="text-sm text-muted-foreground">{period}</span>
+          </p>
+          {plan.priceNote && <p class={`mt-1 ${ui.note}`}>{plan.priceNote}</p>}
+          {person && (
+            <form method="post" action={`${prefix}/pro/checkout/`} class="mt-6">
+              <p class={ui.note}>{fill(t.signedInAs, { email: person.email ?? '' })}</p>
+              <input type="hidden" name="as" value="account" />
+              <input type="hidden" name="plan" value={plan.id} />
+              {members !== null && (
+                <>
+                  <label for="members" class={`mt-4 ${ui.label}`}>
+                    {t.membersLabel}
+                  </label>
+                  <input
+                    id="members"
+                    name="members"
+                    type="number"
+                    min={minMembers}
+                    max="1000"
+                    value={members}
+                    required
+                    class={ui.field}
+                  />
+                  <p class={`mt-1 ${ui.note}`}>{fill(t.membersNote, { count: String(minMembers) })}</p>
+                </>
+              )}
+              <button type="submit" class={ui.primary}>
+                {t.pay}
+              </button>
+            </form>
+          )}
+          {!person && guestOn && (
+            <form method="post" action={`${prefix}/pro/checkout/`} class="mt-6">
+              <p class={ui.note}>{t.guestNote}</p>
+              <input type="hidden" name="as" value="guest" />
+              <input type="hidden" name="plan" value={plan.id} />
+              {members !== null && (
+                <>
+                  <label for="members" class={`mt-4 ${ui.label}`}>
+                    {t.membersLabel}
+                  </label>
+                  <input
+                    id="members"
+                    name="members"
+                    type="number"
+                    min={minMembers}
+                    max="1000"
+                    value={members}
+                    required
+                    class={ui.field}
+                  />
+                  <p class={`mt-1 ${ui.note}`}>{fill(t.membersNote, { count: String(minMembers) })}</p>
+                </>
+              )}
+              <button type="submit" class={ui.primary}>
+                {t.payGuest}
+              </button>
+            </form>
+          )}
+          {!person && guestOn && signInOn && <OrDivider label={all.signIn.or} />}
+          {!person && signInOn && (
+            <>
+              {!guestOn && <p class="mt-6">{t.signInFirst}</p>}
+              <a href={signInHref(locale, here)} class={guestOn ? ui.secondary : ui.primary}>
+                {t.signInToBuy}
+              </a>
+            </>
+          )}
+          {!person && !guestOn && !signInOn && <p class="mt-6">{all.signIn.unavailable}</p>}
+        </>
+      )}
+    </AuthCard>
+  )}
+</BaseLayout>

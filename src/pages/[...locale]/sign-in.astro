@@ -51,6 +51,7 @@ const errors: Record<string, string> = {
   unconfirmed: t.errorUnconfirmed,
   failed: t.errorFailed,
   google: t.errorGoogle,
+  invite: t.errorInvite,
 };
 const notices: Record<string, string> = { password: t.passwordChanged };
 const error = signedIn ? undefined : errors[Astro.url.searchParams.get('error') ?? ''];

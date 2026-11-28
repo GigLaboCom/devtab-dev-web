@@ -18,9 +18,15 @@ interface Props {
   page?: PageId | ServerPageId;
   /** A wider column (the plans' cards); the reading width otherwise. */
   wide?: boolean;
+  /**
+   * An address to move on to at once (`<meta http-equiv="refresh">`): the
+   * payment provider's page after a checkout starts, which a form may not
+   * redirect to under the policy's `form-action 'self'`.
+   */
+  refresh?: string | undefined;
 }
 
-const { locale, page, wide = false } = Astro.props;
+const { locale, page, wide = false, refresh } = Astro.props;
 const column = wide ? 'max-w-5xl' : 'max-w-3xl';
 const t = messages(locale);
 const server = page !== undefined && page in serverPages ? serverPages[page as ServerPageId] : undefined;
@@ -41,6 +47,7 @@ const fullTitle = title === t.site.name ? title : `${title} · ${t.site.name}`;
     <meta name="description" content={description} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     {noindex && <meta name="robots" content="noindex" />}
+    {refresh && <meta http-equiv="refresh" content={`0;url=${refresh}`} />}
     {path !== undefined && (
       <>
         <link rel="canonical" href={getAbsoluteLocaleUrl(locale, path)} />

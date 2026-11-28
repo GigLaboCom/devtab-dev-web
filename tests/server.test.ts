@@ -27,6 +27,9 @@ import { cspProblems } from './csp.ts';
 import { tags, text } from './html.ts';
 
 const catalogues: Record<Locale, typeof en> = { en, ru };
+/** A catalogue string with its `{placeholders}` filled in, as the pages fill it. */
+const fill = (template: string, values: Record<string, string>) =>
+  template.replace(/\{(\w+)\}/g, (whole, name: string) => values[name] ?? whole);
 const entry = new URL('../dist/server/entry.mjs', import.meta.url).pathname;
 const origin = new URL(siteUrl).origin;
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/internal-plans.json', import.meta.url), 'utf8')) as {
@@ -38,7 +41,51 @@ const pathOf = (locale: string, path: string) =>
 const urlOf = (locale: string, path: string) => new URL(pathOf(locale, path), origin).href;
 
 /** What the stub of the internal API answers, set by each test, and what Supabase Auth was asked. */
-const stub = { down: false, empty: false, available: [] as string[], asked: [] as string[] };
+const stub = { down: false, empty: false, available: [] as string[], asked: [] as string[], team: false };
+
+/** The checkouts the stub of the internal API starts and shows. */
+const GUEST_CHECKOUT = '0b0b0b0b-0000-4000-8000-000000000001';
+const PERSON_CHECKOUT = '0b0b0b0b-0000-4000-8000-000000000002';
+const CLAIM = 'c'.repeat(43);
+const PAY_URL = 'https://pay.example.invalid/c/pay/cs_test_1';
+const checkouts = {
+  /** `off`: the API refuses guest checkouts (guest-checkout-off). */
+  guestApi: 'on' as 'on' | 'off',
+  guestState: { status: 'open', key: null, key_hint: null, account: null } as Record<string, unknown>,
+  personState: { status: 'completed', key: null, key_hint: 'ABCD' } as Record<string, unknown>,
+  asked: [] as { method: string; path: string; body: Record<string, unknown>; bearer: string }[],
+};
+
+/** The stub API's answer to a checkout route. */
+function checkoutAnswer(method: string, path: string, body: Record<string, unknown>, bearer: string) {
+  const signedIn = bearer === stubToken;
+  const refuse = (status: number, error: string) => [status, { error, message: error }] as const;
+  if (method === 'POST' && path === '/internal/checkouts') {
+    return signedIn
+      ? ([201, { checkout: PERSON_CHECKOUT, redirect_url: PAY_URL, embedded: null }] as const)
+      : refuse(401, 'unauthorized');
+  }
+  if (method === 'POST' && path === '/internal/checkouts/guest') {
+    if (checkouts.guestApi === 'off') return refuse(403, 'guest-checkout-off');
+    return [201, { checkout: GUEST_CHECKOUT, redirect_url: PAY_URL, embedded: null, claim: CLAIM }] as const;
+  }
+  if (method === 'GET' && path === `/internal/checkouts/${PERSON_CHECKOUT}` && signedIn) {
+    return [200, checkouts.personState] as const;
+  }
+  if (method === 'POST' && path === `/internal/checkouts/${GUEST_CHECKOUT}/claim` && body.claim === CLAIM) {
+    return [200, checkouts.guestState] as const;
+  }
+  return refuse(404, 'not-found');
+}
+
+/** A team plan the stub adds to the catalogue when `stub.team` is set. */
+const teamPlan = {
+  ...fixture.plans[1],
+  id: 'team-monthly',
+  name: 'Team',
+  minMembers: 2,
+  available: true,
+};
 const auth: { method: string; path: string; query: URLSearchParams; body: Record<string, unknown> }[] = [];
 /** The sign-in attempts the test servers allow per client address in an hour. */
 const LIMIT = 3;
@@ -53,6 +100,9 @@ const stubAuth = {
   goodCode: 'good-code',
   userId: '00000000-0000-4000-8000-000000000001',
   sessionId: '00000000-0000-4000-8000-0000000000aa',
+  /** The token hash of an invite mail's link, and one of an invite that names no purchase. */
+  inviteHash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
+  plainInviteHash: 'f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3',
 };
 const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
 /** A token of the stub's session: HS256, so that supabase-js asks the stub (`GET /user`) to check it. */
@@ -96,6 +146,15 @@ function authAnswer(
     case 'POST /auth/v1/recover':
       return [200, {}] as const;
     case 'POST /auth/v1/verify':
+      if (body.type === 'invite') {
+        // The metadata the API gives an account it invites for a purchase.
+        const metadata = { locale: 'ru', app: 'devtab', source: 'purchase', checkout: PERSON_CHECKOUT, team: false };
+        if (body.token_hash === stubAuth.inviteHash) {
+          return [200, { ...stubSession(), user: { ...stubUser, user_metadata: metadata } }] as const;
+        }
+        if (body.token_hash === stubAuth.plainInviteHash) return [200, stubSession()] as const;
+        return refuse(403, 'otp_expired');
+      }
       return body.type === 'recovery' && body.token === stubAuth.resetCode && body.email === stubAuth.email
         ? ([200, stubSession()] as const)
         : refuse(403, 'otp_expired');
@@ -136,8 +195,11 @@ async function listen(server: Server): Promise<number> {
   return (server.address() as AddressInfo).port;
 }
 
-/** Starts the built server against the stub, with `methods` as DEVTAB_SIGN_IN_METHODS (none: unset); its address. */
-async function startSite(methods?: string): Promise<string> {
+/**
+ * Starts the built server against the stub, with `methods` as
+ * DEVTAB_SIGN_IN_METHODS (none: unset) and `env` besides; its address.
+ */
+async function startSite(methods?: string, env: Record<string, string> = {}): Promise<string> {
   const probe = createServer();
   const port = await listen(probe);
   await new Promise(resolve => probe.close(resolve));
@@ -152,6 +214,7 @@ async function startSite(methods?: string): Promise<string> {
       DEVTAB_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_stub',
       DEVTAB_RATE_SIGN_IN_PER_IP: String(LIMIT),
       ...(methods === undefined ? {} : { DEVTAB_SIGN_IN_METHODS: methods }),
+      ...env,
     },
     stdio: 'ignore',
   });
@@ -187,6 +250,20 @@ before(async () => {
       });
       return;
     }
+    if (url.pathname.startsWith('/internal/checkouts')) {
+      let body = '';
+      request.on('data', chunk => (body += chunk));
+      request.on('end', () => {
+        const method = request.method ?? 'GET';
+        const parsed = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        const bearer = request.headers.authorization?.replace(/^Bearer /, '') ?? '';
+        checkouts.asked.push({ method, path: url.pathname, body: parsed, bearer });
+        const [status, answer] = checkoutAnswer(method, url.pathname, parsed, bearer);
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(answer));
+      });
+      return;
+    }
     stub.asked.push(`${url.pathname}${url.search}`);
     if (url.pathname !== '/internal/plans' || stub.down) {
       response.writeHead(503, { 'content-type': 'application/json' });
@@ -195,13 +272,16 @@ before(async () => {
     }
     const plans = stub.empty
       ? []
-      : fixture.plans.map(plan => ({ ...plan, available: stub.available.includes(plan.id) }));
+      : [
+          ...fixture.plans.map(plan => ({ ...plan, available: stub.available.includes(plan.id) })),
+          ...(stub.team ? [teamPlan] : []),
+        ];
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ ...fixture, locale: url.searchParams.get('locale'), plans }));
   });
   apiBase = `http://127.0.0.1:${await listen(api)}`;
-  // Every method on: every page of signing in exists.
-  base = await startSite('email,password,google');
+  // Every method on: every page of signing in exists; buying without an account too.
+  base = await startSite('email,password,google', { DEVTAB_GUEST_CHECKOUT: 'true' });
 });
 
 after(() => {
@@ -787,4 +867,220 @@ test('a method that is off is not offered, and its pages and endpoints are not f
   const nothing = await page('/sign-in/', '', none);
   assert.deepEqual(actions(nothing.html), []);
   assert.ok(nothing.text.includes(en.pages.signIn.unavailable));
+});
+
+/** The `<meta http-equiv="refresh">` target of a page, if any. */
+const refreshOf = (html: string) =>
+  tags(html, 'meta')
+    .find(meta => meta.get('http-equiv') === 'refresh')
+    ?.get('content')
+    ?.replace(/^0;url=/, '')
+    .replace(/&amp;/g, '&');
+
+/** A signed-in browser's cookies, by the stub's password. */
+async function signedInJar(from: string): Promise<Jar> {
+  const signedIn = await post(
+    '/auth/password/',
+    { step: 'sign-in', email: stubAuth.email, password: stubAuth.password, locale: 'en' },
+    from,
+  );
+  return new Jar().take(signedIn.cookies);
+}
+
+test('/pro/checkout/ sells a plan without an account and keeps the checkout’s secret in this browser', async () => {
+  Object.assign(stub, { down: false, empty: false, available: ['pro-monthly'], team: false });
+  checkouts.guestApi = 'on';
+  const t = en.pages.checkout;
+  const offer = await page('/pro/checkout/?plan=pro-monthly');
+  assert.equal(offer.status, 200);
+  assert.ok(offer.text.includes('Monthly') && offer.text.includes(t.guestNote), offer.text);
+  assert.deepEqual(actions(offer.html), ['/pro/checkout/']);
+  const as = tags(offer.html, 'input').find(input => input.get('name') === 'as');
+  assert.equal(as?.get('value'), 'guest');
+  const next = encodeURIComponent('/pro/checkout/?plan=pro-monthly');
+  assert.ok(hrefs(offer.html).includes(`/sign-in/?next=${next}`), 'or sign in first, and back');
+
+  checkouts.asked.length = 0;
+  const response = await fetch(`${base}/ru/pro/checkout/`, {
+    method: 'POST',
+    headers: { origin: base, 'x-forwarded-for': '203.0.113.1', 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ as: 'guest', plan: 'pro-monthly' }),
+    redirect: 'manual',
+  });
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.equal(refreshOf(html), PAY_URL, 'on to the provider’s page, not by a redirect of the form');
+  assert.ok(hrefs(html).includes(PAY_URL));
+  assert.ok(text(html).includes(ru.pages.checkout.continueNote));
+  assert.deepEqual(cspProblems(html, response.headers.get('content-security-policy') ?? undefined), []);
+  assert.deepEqual(checkouts.asked, [
+    { method: 'POST', path: '/internal/checkouts/guest', body: { plan: 'pro-monthly', locale: 'ru' }, bearer: '' },
+  ]);
+  const kept = response.headers.getSetCookie().find(c => c.startsWith('devtab-checkout='));
+  assert.ok(kept && /HttpOnly/i.test(kept) && /SameSite=Lax/i.test(kept), kept);
+  assert.equal(new Jar().take([kept]).cookies.get('devtab-checkout'), `${GUEST_CHECKOUT}.${CLAIM}`);
+  assert.ok(!html.includes(CLAIM), 'the secret is never in the page');
+
+  // A plan not for sale, another site, too many attempts.
+  const gone = await page('/pro/checkout/?plan=pro-annual');
+  assert.ok(gone.text.includes(t.notForSale));
+  assert.deepEqual(actions(gone.html), []);
+  const foreign = await post(
+    '/pro/checkout/',
+    { as: 'guest', plan: 'pro-monthly' },
+    '203.0.113.2',
+    '',
+    'https://elsewhere.example.invalid',
+  );
+  assert.equal(foreign.status, 403);
+  const from = '203.0.113.3';
+  for (let n = 0; n < LIMIT; n += 1) await post('/pro/checkout/', { as: 'guest', plan: 'pro-monthly' }, from);
+  const over = await fetch(`${base}/pro/checkout/`, {
+    method: 'POST',
+    headers: { origin: base, 'x-forwarded-for': from, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ as: 'guest', plan: 'pro-monthly' }),
+  });
+  assert.ok(text(await over.text()).includes(en.pages.signIn.errorRate), 'counted like signing in');
+});
+
+test('/pro/checkout/ asks a team’s size, and says so when the API refuses a guest', async () => {
+  Object.assign(stub, { down: false, empty: false, available: [], team: true });
+  const t = en.pages.checkout;
+  const offer = await page('/pro/checkout/?plan=team-monthly');
+  const members = tags(offer.html, 'input').find(input => input.get('name') === 'members');
+  assert.deepEqual([members?.get('min'), members?.get('value')], ['2', '2']);
+  checkouts.asked.length = 0;
+  const post_ = (fields: Record<string, string>, from: string) =>
+    fetch(`${base}/pro/checkout/`, {
+      method: 'POST',
+      headers: { origin: base, 'x-forwarded-for': from, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields),
+    }).then(async r => text(await r.text()));
+  await post_({ as: 'guest', plan: 'team-monthly', members: '3' }, '203.0.113.20');
+  assert.deepEqual(checkouts.asked.at(-1)?.body, { plan: 'team-monthly', locale: 'en', members: 3 });
+  const wrong = await post_({ as: 'guest', plan: 'team-monthly', members: '0' }, '203.0.113.21');
+  assert.ok(wrong.includes(fill(t.errorMembers, { min: '2' })), wrong);
+  assert.equal(checkouts.asked.length, 1, 'a wrong size never reaches the API');
+
+  checkouts.guestApi = 'off';
+  const refused = await post_({ as: 'guest', plan: 'team-monthly', members: '2' }, '203.0.113.22');
+  assert.ok(refused.includes(t.errorGuestOff), refused);
+  checkouts.guestApi = 'on';
+  stub.team = false;
+});
+
+test('/pro/checkout/ buys for a signed-in person’s account', async () => {
+  Object.assign(stub, { down: false, empty: false, available: ['pro-monthly'], team: false });
+  const jar = await signedInJar('203.0.113.30');
+  const offer = await page('/pro/checkout/?plan=pro-monthly', jar.header);
+  assert.ok(offer.text.includes(fill(en.pages.checkout.signedInAs, { email: stubAuth.email })), offer.text);
+  const as = tags(offer.html, 'input').find(input => input.get('name') === 'as');
+  assert.equal(as?.get('value'), 'account');
+  assert.ok(!offer.text.includes(en.pages.checkout.payGuest));
+  checkouts.asked.length = 0;
+  const response = await fetch(`${base}/pro/checkout/`, {
+    method: 'POST',
+    headers: {
+      origin: base,
+      cookie: jar.header,
+      'x-forwarded-for': '203.0.113.31',
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ as: 'account', plan: 'pro-monthly' }),
+  });
+  assert.equal(refreshOf(await response.text()), PAY_URL);
+  assert.deepEqual(checkouts.asked, [
+    { method: 'POST', path: '/internal/checkouts', body: { plan: 'pro-monthly', locale: 'en' }, bearer: stubToken },
+  ]);
+  assert.ok(!response.headers.getSetCookie().some(c => c.startsWith('devtab-checkout=')));
+});
+
+test('without guest checkout, /pro/checkout/ asks to sign in and refuses a guest’s form', async () => {
+  Object.assign(stub, { down: false, empty: false, available: ['pro-monthly'], team: false });
+  const accountsOnly = await startSite('email,password');
+  const offer = await page('/pro/checkout/?plan=pro-monthly', '', accountsOnly);
+  assert.deepEqual(actions(offer.html), [], 'no form to buy without an account');
+  assert.ok(offer.text.includes(en.pages.checkout.signInFirst));
+  const next = encodeURIComponent('/pro/checkout/?plan=pro-monthly');
+  assert.ok(hrefs(offer.html).includes(`/sign-in/?next=${next}`));
+  const refused = await fetch(`${accountsOnly}/pro/checkout/`, {
+    method: 'POST',
+    headers: { origin: accountsOnly, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ as: 'guest', plan: 'pro-monthly' }),
+    redirect: 'manual',
+  });
+  assert.equal(refused.status, 404);
+});
+
+test('/pro/thanks/ shows a guest checkout to the browser that started it, and only to it', async () => {
+  const t = en.pages.thanks;
+  const cookie = `devtab-checkout=${GUEST_CHECKOUT}.${CLAIM}`;
+  const path = `/pro/thanks/?ref=${GUEST_CHECKOUT}`;
+  const elsewhere = await page(path);
+  assert.ok(elsewhere.text.includes(t.nothing), 'another browser sees nothing');
+  const otherCheckout = await page(`/pro/thanks/?ref=${PERSON_CHECKOUT}`, cookie);
+  assert.ok(otherCheckout.text.includes(t.nothing));
+
+  checkouts.guestState = { status: 'open', key: null, key_hint: null, account: null };
+  const open = await page(path, cookie);
+  assert.ok(open.text.includes(t.open) && open.text.includes(t.openGuest), open.text);
+  assert.ok(hrefs(open.html).includes(path), 'reload to ask again');
+
+  checkouts.guestState = {
+    status: 'completed',
+    key: 'DTD-AAAA-BBBB-CCCC-DDDD-EEEE',
+    key_hint: 'EEEE',
+    account: 'invited',
+  };
+  const done = await page(path, cookie);
+  assert.ok(done.text.includes('DTD-AAAA-BBBB-CCCC-DDDD-EEEE') && done.text.includes(t.invited), done.text);
+  assert.ok(!hrefs(done.html).includes('/pro/connect/'), 'connecting needs the account');
+
+  checkouts.guestState = { status: 'completed', key: null, key_hint: 'EEEE', account: 'existing' };
+  const existing = await page(`/ru/pro/thanks/?ref=${GUEST_CHECKOUT}`, cookie);
+  assert.ok(existing.text.includes(ru.pages.thanks.existing), existing.text);
+  assert.ok(existing.text.includes(fill(ru.pages.thanks.keyHint, { hint: 'EEEE' })));
+  assert.ok(hrefs(existing.html).includes(`/ru/sign-in/?next=${encodeURIComponent(`/ru${path}`)}`));
+});
+
+test('an invite’s link signs the buyer in and lands on the purchase, with a password offered but not asked', async () => {
+  auth.length = 0;
+  const response = await fetch(`${base}/auth/callback/?token_hash=${stubAuth.inviteHash}&type=invite&locale=en`, {
+    redirect: 'manual',
+  });
+  assert.equal(response.status, 303);
+  assert.equal(
+    response.headers.get('location'),
+    `/ru/pro/thanks/?ref=${PERSON_CHECKOUT}`,
+    'the account’s purchase, in its language: the callback decides, not the link',
+  );
+  const asked = auth.at(-1)!;
+  assert.deepEqual(
+    [asked.path, asked.body.type, asked.body.token_hash],
+    ['/auth/v1/verify', 'invite', stubAuth.inviteHash],
+  );
+  const jar = new Jar().take(response.headers.getSetCookie());
+  assert.ok(jar.has(/^sb-127-auth-token(\.\d+)?$/), 'signed in');
+  assert.equal(jar.cookies.get('devtab-reset'), stubAuth.sessionId, 'this session may set a password');
+
+  checkouts.personState = { status: 'completed', key: null, key_hint: 'ABCD' };
+  const landing = await page(`/ru/pro/thanks/?ref=${PERSON_CHECKOUT}`, jar.header);
+  const t = ru.pages.thanks;
+  assert.ok(landing.text.includes(t.done) && landing.text.includes(fill(t.keyHint, { hint: 'ABCD' })), landing.text);
+  assert.ok(hrefs(landing.html).includes('/ru/pro/connect/'));
+  const next = encodeURIComponent(`/ru/pro/thanks/?ref=${PERSON_CHECKOUT}`);
+  assert.ok(hrefs(landing.html).includes(`/ru/reset-password/?next=${next}`), 'a password, if wanted');
+
+  // Signed in otherwise (no invite): no password offered.
+  const plain = await signedInJar('203.0.113.40');
+  const other = await page(`/pro/thanks/?ref=${PERSON_CHECKOUT}`, plain.header);
+  assert.ok(hrefs(other.html).includes('/pro/connect/'));
+  assert.ok(!hrefs(other.html).some(href => href.startsWith('/reset-password/')));
+
+  const noPurchase = await page(`/auth/callback/?token_hash=${stubAuth.plainInviteHash}&type=invite&locale=ru`);
+  assert.equal(noPurchase.location, '/ru/sign-in/');
+  const used = await page('/auth/callback/?token_hash=0000000000000000000000000000&type=invite&locale=ru');
+  assert.equal(used.location, '/ru/sign-in/?error=invite');
+  const wording = await page('/ru/sign-in/?error=invite');
+  assert.ok(wording.text.includes(ru.pages.signIn.errorInvite));
 });

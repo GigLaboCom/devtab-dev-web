@@ -28,6 +28,9 @@ const list = {
   forgotPassword: { path: 'forgot-password/', index: false, session: true, signIn: false, script: false },
   resetPassword: { path: 'reset-password/', index: false, session: true, signIn: false, script: false },
   connect: { path: 'pro/connect/', index: false, session: true, signIn: true, script: true },
+  // Buying, with or without an account, and the return from the payment page.
+  checkout: { path: 'pro/checkout/', index: false, session: true, signIn: false, script: false },
+  thanks: { path: 'pro/thanks/', index: false, session: true, signIn: false, script: false },
 };
 
 export type ServerPageId = keyof typeof list;

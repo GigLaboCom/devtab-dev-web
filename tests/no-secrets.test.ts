@@ -1,8 +1,8 @@
 /**
  * The site's server holds no secret: of the environment it reads only public
  * values (the API's internal address, the Supabase project's address and
- * publishable key, the site's address, the sign-in methods it offers) and a
- * rate limit, and nothing of it
+ * publishable key, the site's address, the sign-in methods it offers,
+ * whether it sells without an account) and a rate limit, and nothing of it
  * names Supabase's secret key, which only the API may ever hold.
  */
 import assert from 'node:assert/strict';
@@ -21,6 +21,7 @@ const allowed = new Set([
   'DEVTAB_RATE_SIGN_IN_PER_IP',
   'DEVTAB_SIGN_IN_METHODS',
   'DEVTAB_EXTENSION_IDS',
+  'DEVTAB_GUEST_CHECKOUT',
   'SITE_URL',
   // Astro's own, set at build time.
   'DEV',
