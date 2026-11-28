@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, user_id, plan_id, price_id, provider, provider_checkout_id, licence_id, status,\n                locale, created_at, expires_at\n         from app.checkouts where id = $1\n         for update",
+  "query": "select id, user_id, plan_id, price_id, provider, provider_checkout_id, licence_id, status,\n                locale, created_at, expires_at, claim_hash, buyer\n         from app.checkouts where id = $1\n         for update",
   "describe": {
     "columns": [
       {
@@ -123,6 +123,28 @@
             "name": "expires_at"
           }
         }
+      },
+      {
+        "ordinal": 11,
+        "name": "claim_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "claim_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "buyer",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app.checkouts",
+            "name": "buyer"
+          }
+        }
       }
     ],
     "parameters": {
@@ -132,7 +154,7 @@
     },
     "nullable": [
       false,
-      false,
+      true,
       false,
       false,
       false,
@@ -141,8 +163,10 @@
       false,
       false,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
-  "hash": "3a49e5e7033799a2411537df71f24f2cf1e295bc7094815f5d1c7f3c53788da5"
+  "hash": "fe24ad8dbd7035afe6ba91637616abb58a9907bd981cd150aa1b231dd5ac9db3"
 }

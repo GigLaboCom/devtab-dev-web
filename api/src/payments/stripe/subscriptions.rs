@@ -137,6 +137,22 @@ impl StripeProvider {
         })
     }
 
+    /// The address the buyer typed in a Checkout Session: its
+    /// `customer_details.email` (Stripe collects one in every subscription
+    /// checkout without a customer), else `customer_email`. A Checkout
+    /// Session is readable with the key's write permission on Checkout
+    /// Sessions; no permission on Customers is needed.
+    pub async fn fetch_checkout_email(&self, id: &str) -> Result<Option<String>, ProviderError> {
+        if !is_object_id(id) {
+            return Err(ProviderError::NotFound(format!("checkout session `{id}`")));
+        }
+        let session = self
+            .client
+            .get(&format!("/v1/checkout/sessions/{id}"), &[])
+            .await?;
+        Ok(checkout_email(&session))
+    }
+
     /// The subscription a charge or dispute paid for: its payment intent →
     /// the paid invoice payment → the invoice's subscription. `None` for a
     /// payment no subscription invoice holds.
@@ -195,6 +211,21 @@ impl EventSource for StripeProvider {
     fn dispute<'a>(&'a self, id: &'a str) -> ProviderFuture<'a, PaymentSnapshot> {
         Box::pin(self.fetch_dispute(id))
     }
+
+    fn checkout_email<'a>(&'a self, id: &'a str) -> ProviderFuture<'a, Option<String>> {
+        Box::pin(self.fetch_checkout_email(id))
+    }
+}
+
+/// The buyer's address in a Checkout Session.
+pub fn checkout_email(session: &Value) -> Option<String> {
+    session
+        .get("customer_details")
+        .and_then(|details| details.get("email"))
+        .and_then(Value::as_str)
+        .or_else(|| session.get("customer_email").and_then(Value::as_str))
+        .filter(|email| !email.trim().is_empty())
+        .map(str::to_owned)
 }
 
 /// A Subscription object with `latest_invoice` expanded.
@@ -370,6 +401,25 @@ mod tests {
                 "{ignored}"
             );
         }
+    }
+
+    #[test]
+    fn the_buyer_s_address_is_the_one_typed_in_the_checkout() {
+        let session = json!({"customer_details": {"email": "Buyer@Example.invalid"},
+                             "customer_email": "other@example.invalid"});
+        assert_eq!(
+            checkout_email(&session).as_deref(),
+            Some("Buyer@Example.invalid")
+        );
+        let prefilled = json!({"customer_details": null, "customer_email": "a@example.invalid"});
+        assert_eq!(
+            checkout_email(&prefilled).as_deref(),
+            Some("a@example.invalid")
+        );
+        assert_eq!(
+            checkout_email(&json!({"customer_details": {"email": ""}})),
+            None
+        );
     }
 
     fn subscription(status: &str, invoice: &str) -> Value {

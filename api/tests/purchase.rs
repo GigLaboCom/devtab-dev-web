@@ -5,22 +5,26 @@
 //! Stripe itself is never reached: `process_event` gets a provider double
 //! whose subscription state the test sets (with Stripe's real mapping of
 //! events to signals), and the routes that call Stripe's API get a stand-in
-//! on a loopback port. Tests that need the database are skipped without
+//! on a loopback port. Supabase Auth's admin API, which invites the buyers
+//! of guest checkouts, is a stand-in too, which makes the invited user in
+//! the test database as Auth would. Tests that need the database are skipped without
 //! `DEVTAB_TEST_DATABASE_URL`; each makes its own plan, people and ids and
 //! deletes them at the end.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 mod support;
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::extract::{Path, State};
-use axum::http::{Request, StatusCode};
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, Request, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use devtab_api::accounts::{Accounts, SecretKey};
 use devtab_api::auth::Verifier;
 use devtab_api::clock::{Clock as _, ManualClock, SharedClock};
 use devtab_api::jobs::worker;
@@ -34,7 +38,7 @@ use devtab_api::payments::{
     EventSource, PaymentSnapshot, Payments, ProviderError, ProviderFuture, Signal,
     SubscriptionSnapshot, SubscriptionStatus,
 };
-use devtab_api::store::{checkouts, events};
+use devtab_api::store::{checkouts, events, jobs};
 use devtab_api::{AppState, Config, internal_app, public_app};
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use http_body_util::BodyExt as _;
@@ -61,6 +65,8 @@ fn shared(clock: &ManualClock) -> SharedClock {
 struct Double {
     subscriptions: Mutex<Vec<SubscriptionSnapshot>>,
     payment: Mutex<Option<PaymentSnapshot>>,
+    /// The address typed in each provider checkout, by its id.
+    emails: Mutex<HashMap<String, String>>,
 }
 
 impl Double {
@@ -106,6 +112,10 @@ impl EventSource for Double {
 
     fn dispute<'a>(&'a self, id: &'a str) -> ProviderFuture<'a, PaymentSnapshot> {
         self.charge(id)
+    }
+
+    fn checkout_email<'a>(&'a self, id: &'a str) -> ProviderFuture<'a, Option<String>> {
+        Box::pin(async move { Ok(self.emails.lock().unwrap().get(id).cloned()) })
     }
 }
 
@@ -178,17 +188,57 @@ impl World {
         checkouts::insert(
             &mut self.owner,
             &checkouts::NewCheckout {
-                user_id: user,
+                user_id: Some(user),
                 plan_id: &self.plan,
                 price_id,
                 provider: stripe::ID,
                 locale: "en",
                 created_at: now,
                 expires_at: now + Duration::hours(24),
+                claim_hash: None,
             },
         )
         .await
         .unwrap()
+    }
+
+    /// A guest checkout in `locale`, started at the provider as `cs_…`: its
+    /// id and the provider's id of it.
+    async fn guest_checkout(&mut self, locale: &str, now: OffsetDateTime) -> (Uuid, String) {
+        let price_id: Uuid = sqlx::query_scalar(
+            "select id from app.plan_prices where provider = 'stripe' and provider_price_id = $1",
+        )
+        .bind(&self.price)
+        .fetch_one(&mut self.owner)
+        .await
+        .unwrap();
+        let claim = devtab_api::licence::secret::generate().unwrap();
+        let id = checkouts::insert(
+            &mut self.owner,
+            &checkouts::NewCheckout {
+                user_id: None,
+                plan_id: &self.plan,
+                price_id,
+                provider: stripe::ID,
+                locale,
+                created_at: now,
+                expires_at: now + Duration::hours(24),
+                claim_hash: Some(&claim.hash),
+            },
+        )
+        .await
+        .unwrap();
+        let session = format!("cs_{}", Uuid::new_v4().simple());
+        checkouts::set_provider_checkout(&mut self.owner, id, &session)
+            .await
+            .unwrap();
+        (id, session)
+    }
+
+    /// An address nobody has, in mixed case and with spaces around, as a
+    /// buyer may type it.
+    fn new_email() -> String {
+        format!(" Guest-{}@Example.Invalid ", Uuid::new_v4().simple())
     }
 
     fn snapshot(&self, id: &str, customer: &str, end: OffsetDateTime) -> SubscriptionSnapshot {
@@ -231,9 +281,20 @@ impl World {
         event: i64,
         now: OffsetDateTime,
     ) -> Result<Processed, ProcessError> {
+        self.process_with(source, None, event, now).await
+    }
+
+    /// The same, inviting guest buyers with `accounts`.
+    async fn process_with(
+        &self,
+        source: &dyn EventSource,
+        accounts: Option<&Accounts>,
+        event: i64,
+        now: OffsetDateTime,
+    ) -> Result<Processed, ProcessError> {
         let pool = support::api_pool(&self.url).await;
         let mut tx = pool.begin().await.unwrap();
-        let result = process::process_event(&mut tx, source, event, now).await;
+        let result = process::process_event(&mut tx, source, accounts, event, now).await;
         if result.is_ok() {
             tx.commit().await.unwrap();
         }
@@ -252,6 +313,14 @@ impl World {
     }
 
     async fn clean(mut self) {
+        sqlx::query(
+            "delete from app.jobs where kind = 'mail_licence' and (payload->>'licence')::uuid in
+               (select id from app.licences where plan_id = $1)",
+        )
+        .bind(&self.plan)
+        .execute(&mut self.owner)
+        .await
+        .unwrap();
         sqlx::query(
             "delete from app.licence_members where licence_id in
                (select id from app.licences where plan_id = $1)",
@@ -548,6 +617,8 @@ async fn a_customer_of_another_account_or_a_paid_subscription_without_our_checko
 struct StandIn {
     subscription: Mutex<Option<Value>>,
     checkouts: Mutex<Vec<Vec<(String, String)>>>,
+    /// The address every checkout session says its buyer typed.
+    email: Mutex<Option<String>>,
 }
 
 async fn stand_in() -> (String, Arc<StandIn>) {
@@ -565,9 +636,17 @@ async fn stand_in() -> (String, Arc<StandIn>) {
                 |State(s): State<Arc<StandIn>>,
                  axum::Form(form): axum::Form<Vec<(String, String)>>| async move {
                     s.checkouts.lock().unwrap().push(form);
-                    Json(json!({"id": "cs_test_standin", "url": "https://checkout.stripe.com/c/pay/cs_test_standin"}))
+                    let id = format!("cs_test_{}", Uuid::new_v4().simple());
+                    Json(json!({"id": id, "url": "https://checkout.stripe.com/c/pay/cs_test_standin"}))
                 },
             ),
+        )
+        .route(
+            "/v1/checkout/sessions/{id}",
+            get(|State(s): State<Arc<StandIn>>, Path(id): Path<String>| async move {
+                let email = s.email.lock().unwrap().clone();
+                Json(json!({"id": id, "object": "checkout.session", "customer_details": {"email": email}}))
+            }),
         )
         .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -756,11 +835,14 @@ async fn call(
     token: &str,
     body: Option<Value>,
 ) -> (StatusCode, Value) {
-    let request = Request::builder()
+    let mut request = Request::builder()
         .method(method)
         .uri(path)
-        .header("authorization", format!("Bearer {token}"))
-        .header("content-type", "application/json")
+        .header("content-type", "application/json");
+    if !token.is_empty() {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    let request = request
         .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
         .unwrap();
     let response = internal_app(&Config::default(), state)
@@ -818,6 +900,10 @@ async fn a_signed_in_person_starts_a_checkout_and_alone_sees_its_key_once() {
     assert_eq!(
         body["redirect_url"],
         "https://checkout.stripe.com/c/pay/cs_test_standin"
+    );
+    assert!(
+        body.get("claim").is_none(),
+        "a signed-in purchase answers as before"
     );
     let checkout = Uuid::parse_str(body["checkout"].as_str().unwrap()).unwrap();
     {
@@ -1261,4 +1347,424 @@ async fn a_team_follows_its_size_at_stripe() {
     world.process(&double, event, now).await.unwrap();
     assert_eq!(size_of(&mut world, &lid).await, (2, 4));
     world.clean().await;
+}
+
+// ---- purchases without an account ----
+
+/// What the stand-in of Supabase Auth does with the next invitation.
+#[derive(Debug, Clone, Copy)]
+enum Invite {
+    /// Makes the user and answers it, as Auth does.
+    Make,
+    /// Answers 503 and makes nothing.
+    Down,
+    /// Makes the user, then fails: the answer is lost.
+    MakeThenFail,
+}
+
+/// Supabase Auth's `POST /auth/v1/invite`, stood in on a loopback port: it
+/// makes the user in the test database (the trigger makes `app.users`) and
+/// records what it was asked.
+#[derive(Debug, Default)]
+struct GoTrue {
+    db: String,
+    next: Mutex<VecDeque<Invite>>,
+    asked: Mutex<Vec<Value>>,
+    made: Mutex<Vec<Uuid>>,
+}
+
+async fn gotrue(db: &str) -> (Accounts, Arc<GoTrue>) {
+    let state = Arc::new(GoTrue {
+        db: db.to_owned(),
+        ..GoTrue::default()
+    });
+    let app = Router::new()
+        .route(
+            "/auth/v1/invite",
+            post(
+                |State(s): State<Arc<GoTrue>>,
+                 Query(query): Query<HashMap<String, String>>,
+                 headers: HeaderMap,
+                 Json(body): Json<Value>| async move {
+                    let header = |name: &str| {
+                        headers
+                            .get(name)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_owned()
+                    };
+                    s.asked.lock().unwrap().push(json!({
+                        "body": body, "redirect_to": query.get("redirect_to"),
+                        "apikey": header("apikey"), "authorization": header("authorization"),
+                    }));
+                    let next = s.next.lock().unwrap().pop_front().unwrap_or(Invite::Make);
+                    if matches!(next, Invite::Down) {
+                        return (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"code": 503, "error_code": "unexpected_failure"})),
+                        );
+                    }
+                    let mut conn = PgConnection::connect(&s.db).await.unwrap();
+                    let email = body["email"].as_str().unwrap().to_owned();
+                    let id = support::insert_auth_user(&mut conn, &email).await;
+                    s.made.lock().unwrap().push(id);
+                    if matches!(next, Invite::MakeThenFail) {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"code": 500, "error_code": "unexpected_failure"})),
+                        );
+                    }
+                    (StatusCode::OK, Json(json!({"id": id, "email": email})))
+                },
+            ),
+        )
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let accounts = Accounts::with_key(
+        &format!("http://{addr}/auth/v1"),
+        SecretKey::parse("sb_secret_purchasetests").unwrap(),
+        "https://web.example.invalid",
+    )
+    .unwrap();
+    (accounts, state)
+}
+
+impl World {
+    async fn checkout_row(&mut self, id: Uuid) -> sqlx::postgres::PgRow {
+        sqlx::query("select user_id, buyer, status, licence_id from app.checkouts where id = $1")
+            .bind(id)
+            .fetch_one(&mut self.owner)
+            .await
+            .unwrap()
+    }
+
+    async fn mail_jobs(&mut self, licence: Uuid) -> Vec<Value> {
+        sqlx::query_scalar(
+            "select payload from app.jobs where kind = 'mail_licence'
+             and payload->>'licence' = $1::text and done_at is null",
+        )
+        .bind(licence)
+        .fetch_all(&mut self.owner)
+        .await
+        .unwrap()
+    }
+
+    /// Takes the users the stand-in made, so that `clean` deletes them.
+    fn adopt(&mut self, auth: &GoTrue) {
+        for id in auth.made.lock().unwrap().iter() {
+            if !self.people.contains(id) {
+                self.people.push(*id);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_guest_purchase_invites_its_new_buyer_once_and_the_licence_is_theirs() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let now = OffsetDateTime::now_utc();
+    let (accounts, auth) = gotrue(&world.url).await;
+    let (checkout, session) = world.guest_checkout("ru", now).await;
+    let typed = World::new_email();
+    let (sub, cus) = ids();
+    let double = Double::default();
+    double
+        .emails
+        .lock()
+        .unwrap()
+        .insert(session.clone(), typed.clone());
+    let mut snapshot = world.snapshot(&sub, &cus, now + Duration::days(30));
+    snapshot.checkout = Some(checkout);
+    double.set(snapshot);
+
+    // The completed checkout and its paid invoice, at once.
+    let completed = world
+        .event(
+            "checkout.session.completed",
+            session_of(checkout, &session, &cus, &sub),
+            now,
+        )
+        .await;
+    let paid = world.event("invoice.paid", paid_invoice(&sub), now).await;
+    let (a, b) = tokio::join!(
+        world.process_with(&double, Some(&accounts), completed, now),
+        world.process_with(&double, Some(&accounts), paid, now)
+    );
+    a.unwrap();
+    b.unwrap();
+    world.adopt(&auth);
+
+    let asked = auth.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "invited once: {asked:?}");
+    let email = typed.trim().to_lowercase();
+    assert_eq!(
+        asked[0]["body"]["email"],
+        email.as_str(),
+        "trimmed, lower case, nothing else"
+    );
+    assert_eq!(
+        asked[0]["body"]["data"],
+        json!({"locale": "ru", "app": "devtab", "source": "purchase",
+               "checkout": checkout.to_string(), "team": false})
+    );
+    assert_eq!(
+        asked[0]["redirect_to"],
+        "https://web.example.invalid/auth/callback/"
+    );
+    assert_eq!(asked[0]["apikey"], "sb_secret_purchasetests");
+    assert_eq!(asked[0]["authorization"], "Bearer sb_secret_purchasetests");
+    let buyer = auth.made.lock().unwrap()[0];
+
+    let licences = world.licences_of(&sub).await;
+    assert_eq!(licences.len(), 1);
+    let licence: Uuid = licences[0].get("id");
+    assert_eq!(licences[0].get::<Option<Uuid>, _>("user_id"), Some(buyer));
+    let row = world.checkout_row(checkout).await;
+    assert_eq!(row.get::<Option<Uuid>, _>("user_id"), Some(buyer));
+    assert_eq!(
+        row.get::<Option<String>, _>("buyer").as_deref(),
+        Some("invited")
+    );
+    assert_eq!(row.get::<String, _>("status"), "completed");
+    let customer: Option<Uuid> = sqlx::query_scalar(
+        "select user_id from app.customers where provider = 'stripe' and provider_customer_id = $1",
+    )
+    .bind(&cus)
+    .fetch_one(&mut world.owner)
+    .await
+    .unwrap();
+    assert_eq!(customer, Some(buyer));
+    assert!(
+        world.mail_jobs(licence).await.is_empty(),
+        "the invite is the mail"
+    );
+
+    // Later events of the subscription invite nobody.
+    let event = world
+        .event("customer.subscription.updated", json!({"id": sub}), now)
+        .await;
+    world
+        .process_with(&double, Some(&accounts), event, now)
+        .await
+        .unwrap();
+    assert_eq!(auth.asked.lock().unwrap().len(), 1);
+    world.clean().await;
+}
+
+#[tokio::test]
+async fn a_guest_buyer_who_has_an_account_is_not_invited_and_a_licence_mail_waits() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let now = OffsetDateTime::now_utc();
+    let (accounts, auth) = gotrue(&world.url).await;
+    let email = format!("member-{}@example.invalid", Uuid::new_v4().simple());
+    let person = support::insert_auth_user(&mut world.owner, &email).await;
+    world.people.push(person);
+    let double = Double::default();
+
+    // A purchase signed in first: the person is a customer already.
+    let signed_in = world.checkout(person, now).await;
+    let (first_sub, first_cus) = ids();
+    double.set(world.snapshot(&first_sub, &first_cus, now + Duration::days(30)));
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session(signed_in, &first_cus, &first_sub),
+            now,
+        )
+        .await;
+    world.process(&double, event, now).await.unwrap();
+
+    // Then without signing in, with the address in capitals: a new customer.
+    let (checkout, session) = world.guest_checkout("en", now).await;
+    double
+        .emails
+        .lock()
+        .unwrap()
+        .insert(session.clone(), format!("  {}  ", email.to_uppercase()));
+    let (sub, cus) = ids();
+    double.set(world.snapshot(&sub, &cus, now + Duration::days(30)));
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session_of(checkout, &session, &cus, &sub),
+            now,
+        )
+        .await;
+    world
+        .process_with(&double, Some(&accounts), event, now)
+        .await
+        .unwrap();
+
+    assert!(auth.asked.lock().unwrap().is_empty(), "nobody invited");
+    let licence: Uuid = world.licences_of(&sub).await[0].get("id");
+    assert_eq!(
+        world.licences_of(&sub).await[0].get::<Option<Uuid>, _>("user_id"),
+        Some(person)
+    );
+    let row = world.checkout_row(checkout).await;
+    assert_eq!(
+        row.get::<Option<String>, _>("buyer").as_deref(),
+        Some("existing")
+    );
+    let customers: i64 =
+        sqlx::query_scalar("select count(*) from app.customers where user_id = $1")
+            .bind(person)
+            .fetch_one(&mut world.owner)
+            .await
+            .unwrap();
+    assert_eq!(customers, 2, "a guest purchase brings its own customer");
+    assert_eq!(
+        world.mail_jobs(licence).await,
+        vec![json!({"licence": licence, "checkout": checkout})]
+    );
+    // The worker does not run it yet: it waits for the mail adapter.
+    let pool = support::api_pool(&world.url).await;
+    let mut tx = pool.begin().await.unwrap();
+    let due = jobs::claim_due(&mut *tx, now + Duration::days(1), 1000, &worker::RUNS)
+        .await
+        .unwrap();
+    assert!(due.iter().all(|job| job.kind != worker::MAIL_LICENCE));
+    tx.rollback().await.unwrap();
+    world.clean().await;
+}
+
+#[tokio::test]
+async fn a_failed_invite_is_tried_again_without_inviting_twice() {
+    let Some(mut world) = World::new(false).await else {
+        return;
+    };
+    let now = OffsetDateTime::now_utc();
+    let (accounts, auth) = gotrue(&world.url).await;
+    let (checkout, session) = world.guest_checkout("en", now).await;
+    let double = Double::default();
+    double
+        .emails
+        .lock()
+        .unwrap()
+        .insert(session.clone(), World::new_email());
+    let (sub, cus) = ids();
+    double.set(world.snapshot(&sub, &cus, now + Duration::days(30)));
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session_of(checkout, &session, &cus, &sub),
+            now,
+        )
+        .await;
+
+    // No secret key: the checkout waits, nothing is asked.
+    let err = world.process(&double, event, now).await.unwrap_err();
+    assert!(
+        matches!(&err, ProcessError::Retry(m) if m.contains("DEVTAB_SUPABASE_SECRET_KEY_FILE")),
+        "{err}"
+    );
+    // Auth is down: tried again later.
+    auth.next
+        .lock()
+        .unwrap()
+        .extend([Invite::Down, Invite::MakeThenFail]);
+    let err = world
+        .process_with(&double, Some(&accounts), event, now)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ProcessError::Retry(_)), "{err}");
+    // Auth makes the user but the answer is lost: the transaction is undone.
+    let err = world
+        .process_with(&double, Some(&accounts), event, now)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ProcessError::Retry(_)), "{err}");
+    world.adopt(&auth);
+    assert!(world.licences_of(&sub).await.is_empty());
+    // The next attempt finds that user instead of inviting again.
+    world
+        .process_with(&double, Some(&accounts), event, now)
+        .await
+        .unwrap();
+    assert_eq!(auth.asked.lock().unwrap().len(), 2, "no third invitation");
+    let made = auth.made.lock().unwrap().clone();
+    assert_eq!(made.len(), 1, "one user");
+    assert_eq!(
+        world.licences_of(&sub).await[0].get::<Option<Uuid>, _>("user_id"),
+        Some(made[0])
+    );
+    world.clean().await;
+}
+
+#[tokio::test]
+async fn a_team_bought_without_an_account_belongs_to_its_buyer() {
+    let Some(mut world) = World::with(false, Some(2)).await else {
+        return;
+    };
+    let clock = ManualClock::new(OffsetDateTime::now_utc());
+    let now = clock.now();
+    let keys = keys();
+    let (accounts, auth) = gotrue(&world.url).await;
+    let state = support::api_state(&world.url, shared(&clock), &Config::default())
+        .await
+        .with_auth(Verifier::fixed(
+            &json!({"keys": [keys.jwk]}),
+            ISSUER.to_owned(),
+            shared(&clock),
+        ));
+    let (checkout, session) = world.guest_checkout("en", now).await;
+    let double = Double::default();
+    double
+        .emails
+        .lock()
+        .unwrap()
+        .insert(session.clone(), World::new_email());
+    let (sub, cus) = ids();
+    let mut snapshot = world.snapshot(&sub, &cus, now + Duration::days(30));
+    snapshot.quantity = 3;
+    double.set(snapshot);
+    let event = world
+        .event(
+            "checkout.session.completed",
+            session_of(checkout, &session, &cus, &sub),
+            now,
+        )
+        .await;
+    world
+        .process_with(&double, Some(&accounts), event, now)
+        .await
+        .unwrap();
+    world.adopt(&auth);
+    assert_eq!(auth.asked.lock().unwrap()[0]["body"]["data"]["team"], true);
+    let owner = auth.made.lock().unwrap()[0];
+    let lid: String =
+        sqlx::query_scalar("select lid from app.licences where provider_subscription_id = $1")
+            .bind(&sub)
+            .fetch_one(&mut world.owner)
+            .await
+            .unwrap();
+    assert_eq!(size_of(&mut world, &lid).await, (3, 6));
+    // The buyer owns the team once they open their account.
+    let (status, team) = call(
+        state,
+        "GET",
+        &format!("/internal/licences/{lid}/members"),
+        &token(&keys, owner, &clock),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, &team["members"]),
+        (StatusCode::OK, &json!(3)),
+        "{team}"
+    );
+    world.clean().await;
+}
+
+/// A completed Checkout Session of ours whose id is `id`.
+fn session_of(checkout: Uuid, id: &str, customer: &str, subscription: &str) -> Value {
+    let mut object = session(checkout, customer, subscription);
+    object["id"] = json!(id);
+    object
 }

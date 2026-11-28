@@ -585,13 +585,22 @@ async fn the_store_queries_work_as_the_api_role() {
     let job = jobs::enqueue(&mut *tx, "test", &json!({ "licence": id }), now)
         .await
         .unwrap();
-    let due = jobs::claim_due(&mut *tx, now, 100).await.unwrap();
+    let due = jobs::claim_due(&mut *tx, now, 100, &["test"])
+        .await
+        .unwrap();
     assert!(due.iter().any(|j| j.id == job));
+    let others = jobs::claim_due(&mut *tx, now, 100, &["other"])
+        .await
+        .unwrap();
+    assert!(
+        !others.iter().any(|j| j.id == job),
+        "a kind the caller does not run waits"
+    );
     jobs::fail(&mut *tx, job, "test failure", now + Duration::minutes(5))
         .await
         .unwrap();
     assert!(
-        !jobs::claim_due(&mut *tx, now, 100)
+        !jobs::claim_due(&mut *tx, now, 100, &["test"])
             .await
             .unwrap()
             .iter()
@@ -599,7 +608,7 @@ async fn the_store_queries_work_as_the_api_role() {
     );
     jobs::complete(&mut *tx, job, now).await.unwrap();
     assert!(
-        !jobs::claim_due(&mut *tx, now + Duration::hours(1), 100)
+        !jobs::claim_due(&mut *tx, now + Duration::hours(1), 100, &["test"])
             .await
             .unwrap()
             .iter()

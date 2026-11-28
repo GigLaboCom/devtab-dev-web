@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, user_id, provider, provider_customer_id from app.customers\n         where user_id = $1 and provider = $2",
+  "query": "select id, user_id, provider, provider_customer_id from app.customers\n         where user_id = $1 and provider = $2\n         order by created_at, id\n         limit 1",
   "describe": {
     "columns": [
       {
@@ -61,5 +61,5 @@
       false
     ]
   },
-  "hash": "ba3e5174835ed7f3ad657d6800dfa5f10d081c30a67f908ed649436a41ebf692"
+  "hash": "daf210c13778ae67cfb650a95be7f29f88123bf7de345cfb7f6024bd7a249b31"
 }

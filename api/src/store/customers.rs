@@ -1,5 +1,7 @@
 //! `app.customers`: a user as the customer of a payment provider. Rows come
 //! from verified provider events; the provider's customer id is a pseudonym.
+//! A user is one customer when buying signed in; each guest purchase brings
+//! the provider's new customer.
 
 use sqlx::PgExecutor;
 use uuid::Uuid;
@@ -57,7 +59,8 @@ pub async fn find_by_provider_id(
     .await
 }
 
-/// The user's customer at `provider`.
+/// The user's customer at `provider`: the first, when guest purchases made
+/// more than one.
 pub async fn find_of_user(
     db: impl PgExecutor<'_>,
     user_id: Uuid,
@@ -66,7 +69,9 @@ pub async fn find_of_user(
     sqlx::query_as!(
         CustomerRow,
         "select id, user_id, provider, provider_customer_id from app.customers
-         where user_id = $1 and provider = $2",
+         where user_id = $1 and provider = $2
+         order by created_at, id
+         limit 1",
         user_id,
         provider,
     )

@@ -31,22 +31,26 @@ pub async fn enqueue(
     .await
 }
 
-/// Up to `limit` jobs due at `now`, locked for the caller's transaction and
-/// skipped by every other one.
+/// Up to `limit` jobs of the `kinds` the caller runs, due at `now`, locked
+/// for the caller's transaction and skipped by every other one. A job of
+/// another kind waits in the queue for a worker that runs it.
 pub async fn claim_due(
     db: impl PgExecutor<'_>,
     now: OffsetDateTime,
     limit: i64,
+    kinds: &[&str],
 ) -> Result<Vec<JobRow>, sqlx::Error> {
+    let kinds: Vec<String> = kinds.iter().map(|&kind| kind.to_owned()).collect();
     sqlx::query_as!(
         JobRow,
         "select id, kind, payload, run_at, attempts from app.jobs
-         where done_at is null and run_at <= $1
+         where done_at is null and run_at <= $1 and kind = any($3)
          order by run_at, id
          limit $2
          for update skip locked",
         now,
         limit,
+        &kinds,
     )
     .fetch_all(db)
     .await

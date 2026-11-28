@@ -22,6 +22,16 @@ use crate::store::{events, jobs};
 /// Processing a stored provider event: `{"event": <provider_events.id>}`.
 pub const PROCESS_EVENT: &str = "process_event";
 
+/// Mailing the buyer of a guest checkout who had an account already (and so
+/// got no invite) that the licence is in it:
+/// `{"licence": <licences.id>, "checkout": <checkouts.id>}`. Queued, not run
+/// yet: this worker does not claim it ([`RUNS`]) until the mail adapter
+/// exists, so these jobs wait in `app.jobs` for it.
+pub const MAIL_LICENCE: &str = "mail_licence";
+
+/// The kinds of jobs this worker runs; a job of any other kind waits.
+pub const RUNS: [&str; 1] = [PROCESS_EVENT];
+
 /// How often the worker looks for due jobs when nothing wakes it.
 pub const POLL: StdDuration = StdDuration::from_secs(5);
 
@@ -45,7 +55,11 @@ pub async fn run_due(state: &AppState) -> Result<usize, sqlx::Error> {
     while ran < MAX_PER_RUN {
         let now = state.clock.now();
         let mut tx = state.store.pool().begin().await?;
-        let Some(job) = jobs::claim_due(&mut *tx, now, 1).await?.into_iter().next() else {
+        let Some(job) = jobs::claim_due(&mut *tx, now, 1, &RUNS)
+            .await?
+            .into_iter()
+            .next()
+        else {
             tx.rollback().await?;
             break;
         };
@@ -113,7 +127,7 @@ async fn process_event(
         .payments
         .as_ref()
         .ok_or_else(|| ProcessError::Retry("no payment provider is configured".to_owned()))?;
-    process::process_event(conn, &payments.stripe, id, now).await?;
+    process::process_event(conn, &payments.stripe, state.accounts.as_deref(), id, now).await?;
     Ok(())
 }
 

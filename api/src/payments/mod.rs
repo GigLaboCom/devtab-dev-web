@@ -205,6 +205,11 @@ pub trait EventSource: Send + Sync + fmt::Debug {
 
     /// The payment behind a closed dispute.
     fn dispute<'a>(&'a self, id: &'a str) -> ProviderFuture<'a, PaymentSnapshot>;
+
+    /// The address the buyer gave in the provider's checkout `id` (its
+    /// `provider_checkout_id`), as typed: whose account a guest checkout's
+    /// licence goes to. None when the provider has none.
+    fn checkout_email<'a>(&'a self, id: &'a str) -> ProviderFuture<'a, Option<String>>;
 }
 
 /// A payment provider: `fake` (development and tests) or a real one.

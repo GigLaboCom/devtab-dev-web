@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select id, kind, payload, run_at, attempts from app.jobs\n         where done_at is null and run_at <= $1\n         order by run_at, id\n         limit $2\n         for update skip locked",
+  "query": "select id, kind, payload, run_at, attempts from app.jobs\n         where done_at is null and run_at <= $1 and kind = any($3)\n         order by run_at, id\n         limit $2\n         for update skip locked",
   "describe": {
     "columns": [
       {
@@ -62,7 +62,8 @@
     "parameters": {
       "Left": [
         "Timestamptz",
-        "Int8"
+        "Int8",
+        "TextArray"
       ]
     },
     "nullable": [
@@ -73,5 +74,5 @@
       false
     ]
   },
-  "hash": "e4fe68a0fe2b3787fec1a487d1d4bb2142906f15a800227a3a2338d07ff4d065"
+  "hash": "0f1cfedc642d483d7bc75f0c504d51f1d070496f774616804acd37df10a8141d"
 }

@@ -16,6 +16,16 @@
 //! started it (never by an address in the event): the provider's customer is
 //! tied to that person, the key is kept to be shown once, and the checkout is
 //! completed.
+//!
+//! A guest checkout (started without an account) has no person yet: when its
+//! subscription is paid, the buyer is the user of the address they typed in
+//! the provider's checkout (read from the provider, trimmed and lower case),
+//! found in Supabase Auth or invited by mail ([`Accounts`]), never invited
+//! twice. That happens inside the subscription's lock and the job's
+//! transaction, and the lookup comes first, so a job tried again after a
+//! failure finds the user the first attempt invited instead of inviting
+//! again. A buyer who had an account gets no invite; a `mail_licence` job is
+//! queued for them instead, which waits for the mail adapter.
 
 use sqlx::PgConnection;
 use time::{Duration, OffsetDateTime};
@@ -23,9 +33,11 @@ use uuid::Uuid;
 
 use super::reconcile::{Decision, LicenceState, LicenceStatus, reconcile};
 use super::{EventSource, ProviderError, Signal, SubscriptionSnapshot};
+use crate::accounts::{AccountError, Accounts, Invitation, normal_email};
+use crate::jobs::worker::MAIL_LICENCE;
 use crate::licence::key;
 use crate::store::licences::{NewLicence, SubscriptionLicence};
-use crate::store::{checkouts, customers, events, licences, plans, reveals};
+use crate::store::{checkouts, customers, events, jobs, licences, plans, reveals, users};
 
 /// How long a new key waits to be shown.
 pub const REVEAL_FOR: Duration = Duration::hours(24);
@@ -78,10 +90,12 @@ pub enum LicenceChange {
     Waiting,
 }
 
-/// Processes the stored event `id` in the caller's transaction.
+/// Processes the stored event `id` in the caller's transaction; `accounts`
+/// invites the buyers of guest checkouts (none: such a checkout waits).
 pub async fn process_event(
     conn: &mut PgConnection,
     source: &dyn EventSource,
+    accounts: Option<&Accounts>,
     id: i64,
     now: OffsetDateTime,
 ) -> Result<Processed, ProcessError> {
@@ -114,13 +128,14 @@ pub async fn process_event(
                 ..
             } => {
                 acted = true;
-                sync_subscription(conn, source, &subscription, Some(checkout), now).await?;
+                sync_subscription(conn, source, accounts, &subscription, Some(checkout), now)
+                    .await?;
             }
             Signal::SubscriptionChanged { subscription }
             | Signal::InvoicePaid { subscription }
             | Signal::PaymentFailed { subscription } => {
                 acted = true;
-                sync_subscription(conn, source, &subscription, None, now).await?;
+                sync_subscription(conn, source, accounts, &subscription, None, now).await?;
             }
             Signal::Refunded { charge } => {
                 acted = true;
@@ -154,7 +169,11 @@ async fn lock(
     provider: &str,
     subscription: &str,
 ) -> Result<(), sqlx::Error> {
-    let key = format!("payments:{provider}:{subscription}");
+    lock_key(conn, &format!("payments:{provider}:{subscription}")).await
+}
+
+/// Takes the advisory lock named `key` for the rest of the transaction.
+async fn lock_key(conn: &mut PgConnection, key: &str) -> Result<(), sqlx::Error> {
     sqlx::query!("select pg_advisory_xact_lock(hashtextextended($1, 0))", key)
         .execute(&mut *conn)
         .await
@@ -166,6 +185,7 @@ async fn lock(
 pub async fn sync_subscription(
     conn: &mut PgConnection,
     source: &dyn EventSource,
+    accounts: Option<&Accounts>,
     subscription: &str,
     checkout: Option<Uuid>,
     now: OffsetDateTime,
@@ -203,9 +223,10 @@ pub async fn sync_subscription(
                     ),
                 })
             })?;
-            let id = issue(
+            let id = issue_from_checkout(
                 conn,
-                provider,
+                source,
+                accounts,
                 &snapshot,
                 &checkout,
                 &price.plan_id,
@@ -286,13 +307,64 @@ async fn complete_open(
     Ok(())
 }
 
-/// The first licence of a paid subscription, for the person who started the
-/// checkout.
+/// The first licence of a paid subscription from our `checkout`: for the
+/// person who started it, or a guest checkout's buyer, found or invited now.
+/// A buyer who had an account gets no invite, and the mail that says the
+/// licence is in their account is queued (`mail_licence`).
+#[allow(clippy::too_many_arguments)]
+async fn issue_from_checkout(
+    conn: &mut PgConnection,
+    source: &dyn EventSource,
+    accounts: Option<&Accounts>,
+    snapshot: &SubscriptionSnapshot,
+    checkout: &checkouts::CheckoutRow,
+    plan_id: &str,
+    state: LicenceState,
+    now: OffsetDateTime,
+) -> Result<Uuid, ProcessError> {
+    let provider = source.id();
+    let Some(user) = checkout.user_id else {
+        let buyer = ensure_buyer(conn, source, accounts, checkout).await?;
+        checkouts::set_buyer(&mut *conn, checkout.id, buyer.user(), buyer.as_str()).await?;
+        let id = issue(
+            conn,
+            provider,
+            snapshot,
+            checkout,
+            buyer.user(),
+            plan_id,
+            state,
+            now,
+        )
+        .await?;
+        if let Buyer::Existing(_) = buyer {
+            // No invite for an address that has an account: the licence is in
+            // it. The mail that says so waits for the mail adapter.
+            jobs::enqueue(
+                &mut *conn,
+                MAIL_LICENCE,
+                &serde_json::json!({ "licence": id, "checkout": checkout.id }),
+                now,
+            )
+            .await?;
+        }
+        return Ok(id);
+    };
+    issue(
+        conn, provider, snapshot, checkout, user, plan_id, state, now,
+    )
+    .await
+}
+
+/// The first licence of a paid subscription, for `owner`: the person who
+/// started the checkout, or a guest checkout's buyer.
+#[allow(clippy::too_many_arguments)]
 async fn issue(
     conn: &mut PgConnection,
     provider: &str,
     snapshot: &SubscriptionSnapshot,
     checkout: &checkouts::CheckoutRow,
+    owner: Uuid,
     plan_id: &str,
     state: LicenceState,
     now: OffsetDateTime,
@@ -304,14 +376,21 @@ async fn issue(
         )));
     }
     let (members, seats) = team_size(conn, plan_id, snapshot.quantity).await?;
-    let customer = customer_of(conn, provider, &snapshot.customer, checkout.user_id).await?;
+    let customer = customer_of(
+        conn,
+        provider,
+        &snapshot.customer,
+        owner,
+        checkout.is_guest(),
+    )
+    .await?;
     let lid = key::new_lid().map_err(|err| ProcessError::Retry(err.to_string()))?;
     let new_key = key::generate().map_err(|err| ProcessError::Retry(err.to_string()))?;
     let id = licences::insert(
         &mut *conn,
         &NewLicence {
             lid: &lid,
-            user_id: Some(checkout.user_id),
+            user_id: Some(owner),
             customer_id: Some(customer),
             plan_id,
             kind: "subscription",
@@ -354,13 +433,15 @@ async fn team_size(
 }
 
 /// The provider's customer of `user_id`: found, or recorded now. A customer
-/// tied to someone else, or a second customer of the same person, stops the
-/// issue: one account is one customer.
+/// tied to someone else stops the issue, and so does a second customer of a
+/// person who bought signed in (the checkout named their customer). A guest
+/// checkout could name none, so its buyer may have had one already.
 async fn customer_of(
     conn: &mut PgConnection,
     provider: &str,
     provider_customer_id: &str,
     user_id: Uuid,
+    guest: bool,
 ) -> Result<Uuid, ProcessError> {
     if let Some(customer) =
         customers::find_by_provider_id(&mut *conn, provider, provider_customer_id).await?
@@ -373,15 +454,115 @@ async fn customer_of(
             )))
         };
     }
-    if customers::find_of_user(&mut *conn, user_id, provider)
-        .await?
-        .is_some()
+    if !guest
+        && customers::find_of_user(&mut *conn, user_id, provider)
+            .await?
+            .is_some()
     {
         return Err(ProcessError::Permanent(format!(
             "the account already has another customer at {provider} than {provider_customer_id}"
         )));
     }
     Ok(customers::insert(&mut *conn, user_id, provider, provider_customer_id).await?)
+}
+
+/// How a guest checkout's buyer got the account the licence goes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Buyer {
+    /// A new user, invited by mail now.
+    Invited(Uuid),
+    /// The address had an account already: nobody is invited.
+    Existing(Uuid),
+}
+
+impl Buyer {
+    pub fn user(self) -> Uuid {
+        match self {
+            Self::Invited(id) | Self::Existing(id) => id,
+        }
+    }
+
+    /// As `app.checkouts.buyer` records it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Invited(_) => "invited",
+            Self::Existing(_) => "existing",
+        }
+    }
+}
+
+/// The user a paid guest checkout belongs to: the account of the address the
+/// buyer typed at the provider, or a new one invited by mail.
+///
+/// The address is only trimmed and lower-cased (no dots or `+tags` dropped):
+/// the account must be the one the person signs in to with that address.
+/// Under an advisory lock on the address, so that two purchases with one
+/// address never both invite it; the lookup comes before the invite, so a
+/// retry after a failed transaction finds the user instead of inviting again
+/// (Supabase Auth would send an unconfirmed address another invite).
+async fn ensure_buyer(
+    conn: &mut PgConnection,
+    source: &dyn EventSource,
+    accounts: Option<&Accounts>,
+    checkout: &checkouts::CheckoutRow,
+) -> Result<Buyer, ProcessError> {
+    let accounts = accounts.ok_or_else(|| {
+        ProcessError::Retry(format!(
+            "checkout {} was started without an account, and no Supabase secret key is set to \
+             invite its buyer (DEVTAB_SUPABASE_SECRET_KEY_FILE)",
+            checkout.id
+        ))
+    })?;
+    let session = checkout.provider_checkout_id.as_deref().ok_or_else(|| {
+        ProcessError::Permanent(format!(
+            "guest checkout {} has no checkout at the provider to read the buyer's address from",
+            checkout.id
+        ))
+    })?;
+    let typed = source.checkout_email(session).await?.ok_or_else(|| {
+        ProcessError::Permanent(format!(
+            "guest checkout {}: the provider has no address of the buyer",
+            checkout.id
+        ))
+    })?;
+    let email = normal_email(&typed).ok_or_else(|| {
+        ProcessError::Permanent(format!(
+            "guest checkout {}: the buyer's address at the provider is not an address",
+            checkout.id
+        ))
+    })?;
+    lock_key(conn, &format!("accounts:{email}")).await?;
+    if let Some(user) = users::id_by_email(&mut *conn, &email).await? {
+        tracing::info!(checkout = %checkout.id, "a guest checkout's buyer has an account: no invite");
+        return Ok(Buyer::Existing(user));
+    }
+    let team = plans::find(&mut *conn, &checkout.plan_id)
+        .await?
+        .is_some_and(|plan| plan.min_members.is_some());
+    let invitation = Invitation {
+        locale: &checkout.locale,
+        checkout: checkout.id,
+        team,
+    };
+    match accounts.invite(&email, &invitation).await {
+        Ok(user) => {
+            tracing::info!(checkout = %checkout.id, "a guest checkout's buyer was invited");
+            Ok(Buyer::Invited(user))
+        }
+        // Made in the meantime, elsewhere (a sign-up): theirs, uninvited.
+        Err(AccountError::Exists) => users::id_by_email(&mut *conn, &email)
+            .await?
+            .map(Buyer::Existing)
+            .ok_or_else(|| {
+                ProcessError::Retry(format!(
+                    "guest checkout {}: Supabase Auth says the buyer's address has an account, \
+                     which is not found yet",
+                    checkout.id
+                ))
+            }),
+        Err(err @ AccountError::Unavailable(_)) => Err(ProcessError::Retry(err.to_string())),
+        Err(err @ AccountError::Refused(_)) => Err(ProcessError::Permanent(err.to_string())),
+    }
 }
 
 /// A full refund or a lost dispute revokes the subscription's licence.

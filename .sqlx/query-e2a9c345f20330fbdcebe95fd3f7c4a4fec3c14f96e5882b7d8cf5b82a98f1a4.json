@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "update app.checkouts set user_id = $2, buyer = $3 where id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e2a9c345f20330fbdcebe95fd3f7c4a4fec3c14f96e5882b7d8cf5b82a98f1a4"
+}

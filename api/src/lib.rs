@@ -3,6 +3,7 @@
 //! the signed-in people of the site's pages, and the admin commands.
 #![forbid(unsafe_code)]
 
+pub mod accounts;
 pub mod admin;
 pub mod auth;
 pub mod clock;

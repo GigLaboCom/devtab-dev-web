@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::Notify;
 
+use crate::accounts::Accounts;
 use crate::auth::{UserCache, Verifier};
 use crate::clock::SharedClock;
 use crate::config::Config;
@@ -32,6 +33,13 @@ pub struct AppState {
     pub payments: Option<Arc<Payments>>,
     /// Wakes the queue's worker when a job is added.
     pub wake: Arc<Notify>,
+    /// Whether a checkout may start without a signed-in person
+    /// (`DEVTAB_GUEST_CHECKOUT`).
+    pub guest_checkout: bool,
+    /// Supabase Auth's admin API, which invites the buyer of a guest
+    /// checkout; none without the project's secret key, and then a guest
+    /// checkout is refused (and one already paid waits for it).
+    pub accounts: Option<Arc<Accounts>>,
 }
 
 impl AppState {
@@ -47,7 +55,16 @@ impl AppState {
             users: UserCache::default(),
             payments: None,
             wake: Arc::new(Notify::new()),
+            guest_checkout: config.guest_checkout,
+            accounts: None,
         }
+    }
+
+    /// The same state, inviting the buyers of guest checkouts with `accounts`.
+    #[must_use]
+    pub fn with_accounts(mut self, accounts: Accounts) -> Self {
+        self.accounts = Some(Arc::new(accounts));
+        self
     }
 
     /// The same state, taking payments with `payments`.

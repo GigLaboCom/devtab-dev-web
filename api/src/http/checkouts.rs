@@ -108,13 +108,14 @@ pub async fn start(
     let id = checkouts::insert(
         pool,
         &checkouts::NewCheckout {
-            user_id: user.id,
+            user_id: Some(user.id),
             plan_id: &plan.id,
             price_id: price.id,
             provider: stripe::ID,
             locale,
             created_at: now,
             expires_at: now + CHECKOUT_OPEN_FOR,
+            claim_hash: None,
         },
     )
     .await?;

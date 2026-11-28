@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use time::OffsetDateTime;
 use tracing_subscriber::EnvFilter;
 
+use crate::accounts::AccountSettings;
 use crate::licence::LicenceSettings;
 use crate::licence::token::Spans;
 use crate::payments;
@@ -110,6 +111,18 @@ pub struct Config {
     pub supabase_url: Option<String>,
     /// The `iss` the access tokens carry; `<supabase_url>/auth/v1` unless set.
     pub jwt_issuer: Option<String>,
+    /// Whether anyone may start a checkout without signing in
+    /// (`DEVTAB_GUEST_CHECKOUT`); off unless set. It also needs
+    /// [`Self::supabase_secret_key_file`], without which a guest checkout is
+    /// refused.
+    pub guest_checkout: bool,
+    /// Supabase Auth as the API reaches it (`DEVTAB_SUPABASE_AUTH_URL`), for
+    /// inviting the buyers of guest checkouts; `<supabase_url>/auth/v1` unless
+    /// set.
+    pub supabase_auth_url: Option<String>,
+    /// The file of the project's secret key (`DEVTAB_SUPABASE_SECRET_KEY_FILE`),
+    /// with which the API invites the buyer of a guest checkout.
+    pub supabase_secret_key_file: Option<PathBuf>,
 }
 
 /// Where the access tokens of signed-in people are checked.
@@ -144,6 +157,9 @@ impl fmt::Debug for Config {
             .field("plans_max_age_s", &self.plans_max_age_s)
             .field("supabase_url", &self.supabase_url)
             .field("jwt_issuer", &self.jwt_issuer)
+            .field("guest_checkout", &self.guest_checkout)
+            .field("supabase_auth_url", &self.supabase_auth_url)
+            .field("supabase_secret_key_file", &self.supabase_secret_key_file)
             .finish()
     }
 }
@@ -187,6 +203,9 @@ impl Default for Config {
             plans_max_age_s: 86_400,
             supabase_url: None,
             jwt_issuer: None,
+            guest_checkout: false,
+            supabase_auth_url: None,
+            supabase_secret_key_file: None,
         }
     }
 }
@@ -465,6 +484,21 @@ impl Config {
         })
     }
 
+    /// Supabase Auth's admin API, with which the buyer of a guest checkout is
+    /// invited: when the secret key's file is set and Auth's address is known.
+    pub fn accounts(&self) -> Option<AccountSettings> {
+        let secret_key_file = self.supabase_secret_key_file.clone()?;
+        let auth_url = self.supabase_auth_url.clone().or_else(|| {
+            self.supabase_url
+                .as_ref()
+                .map(|url| format!("{url}/auth/v1"))
+        })?;
+        Some(AccountSettings {
+            auth_url,
+            secret_key_file,
+        })
+    }
+
     /// What the plans' catalogue is built with.
     pub fn catalogue(&self) -> CatalogueSettings {
         CatalogueSettings {
@@ -536,6 +570,7 @@ impl Config {
         config.read_licence(&get, &mut problems);
         config.read_plans(&get, &mut problems);
         config.read_auth(&get, &mut problems);
+        config.read_accounts(&get, &mut problems);
 
         if let Some(filter) = get("DEVTAB_LOG") {
             match EnvFilter::try_new(&filter) {
@@ -633,6 +668,40 @@ impl Config {
                     "DEVTAB_JWT_ISSUER must be an https:// address (http:// too in dev), got `{issuer}`"
                 ));
             }
+        }
+    }
+
+    /// Purchases without an account: whether they are offered, and Supabase
+    /// Auth's admin API that invites their buyers. The secret key's file is
+    /// read by `serve`; without it a guest checkout is refused, and a signed-in
+    /// purchase works as before.
+    fn read_accounts(&mut self, get: &impl Fn(&str) -> Option<String>, problems: &mut Vec<String>) {
+        let config = self;
+        config.guest_checkout = flag(get, "DEVTAB_GUEST_CHECKOUT", false, problems);
+        if let Some(text) = get("DEVTAB_SUPABASE_AUTH_URL") {
+            let trimmed = text.trim_end_matches('/');
+            let base = trimmed.strip_suffix("/auth/v1").unwrap_or(trimmed);
+            match supabase_url(base, config.env) {
+                Some(url) if trimmed.ends_with("/auth/v1") => {
+                    config.supabase_auth_url = Some(format!("{url}/auth/v1"));
+                }
+                _ => problems.push(format!(
+                    "DEVTAB_SUPABASE_AUTH_URL must be Supabase Auth's address, https:// (http:// too \
+                     in dev), a host name, an optional port and /auth/v1, such as \
+                     https://project.supabase.co/auth/v1; got `{text}`"
+                )),
+            }
+        }
+        config.supabase_secret_key_file = get("DEVTAB_SUPABASE_SECRET_KEY_FILE").map(PathBuf::from);
+        if config.supabase_secret_key_file.is_some()
+            && config.supabase_url.is_none()
+            && config.supabase_auth_url.is_none()
+        {
+            problems.push(
+                "DEVTAB_SUPABASE_SECRET_KEY_FILE needs DEVTAB_SUPABASE_URL or \
+                 DEVTAB_SUPABASE_AUTH_URL: where Supabase Auth is"
+                    .to_owned(),
+            );
         }
     }
 
@@ -1222,6 +1291,60 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err.0.len(), 1, "{err}");
+    }
+
+    #[test]
+    fn guest_checkout_is_off_unless_set_and_invites_through_the_project_s_auth() {
+        let config = load(&[("DEVTAB_DATABASE_URL", "postgres://u@h/db")]).unwrap();
+        assert!(!config.guest_checkout);
+        assert_eq!(config.accounts(), None);
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", "http://127.0.0.1:54332"),
+            ("DEVTAB_GUEST_CHECKOUT", "true"),
+        ])
+        .unwrap();
+        assert!(config.guest_checkout);
+        assert_eq!(
+            config.accounts(),
+            None,
+            "no key: guest checkouts are refused"
+        );
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", "http://127.0.0.1:54332"),
+            ("DEVTAB_SUPABASE_SECRET_KEY_FILE", "/run/secrets/supabase"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.accounts(),
+            Some(AccountSettings {
+                auth_url: "http://127.0.0.1:54332/auth/v1".to_owned(),
+                secret_key_file: "/run/secrets/supabase".into(),
+            })
+        );
+        let config = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_SUPABASE_URL", SUPABASE),
+            ("DEVTAB_SUPABASE_AUTH_URL", "http://auth:9999/auth/v1/"),
+            ("DEVTAB_SUPABASE_SECRET_KEY_FILE", "/run/secrets/supabase"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.accounts().map(|a| a.auth_url).as_deref(),
+            Some("http://auth:9999/auth/v1")
+        );
+        let err = load(&[
+            ("DEVTAB_DATABASE_URL", "postgres://u@h/db"),
+            ("DEVTAB_GUEST_CHECKOUT", "yes"),
+            (
+                "DEVTAB_SUPABASE_AUTH_URL",
+                "https://project.example.invalid",
+            ),
+            ("DEVTAB_SUPABASE_SECRET_KEY_FILE", "/run/secrets/supabase"),
+        ])
+        .unwrap_err();
+        assert_eq!(err.0.len(), 3, "{err}");
     }
 
     #[test]
