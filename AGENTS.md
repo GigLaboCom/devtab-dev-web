@@ -210,6 +210,11 @@ any default attribution a tool adds:
   cookie. Which of the sign-in methods a deployment offers is its setting,
   `DEVTAB_SIGN_IN_METHODS`, never a constant in the code; a method that is
   off is not shown and its pages and endpoints answer 404.
+  Buying without an account is a deployment's setting too
+  (`DEVTAB_GUEST_CHECKOUT`, on the site and the API); only the API holds the
+  Supabase secret key that invites a guest buyer, in a file
+  (`DEVTAB_SUPABASE_SECRET_KEY_FILE`), and it never invites an address that
+  has an account (exact address first, then the canonical inbox).
 - The content security policy (`security.csp` in `astro.config.mjs`) stays
   `default-src 'self'`, `form-action 'self'`, `object-src 'none'`,
   `base-uri 'self'`; never add another host to it. No `style` attributes and
